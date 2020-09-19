@@ -1,20 +1,20 @@
 [user]
-	name = Kate Tsuyu
-	email = kate@kxt.io
-	signingkey = 144B2129293B0F59
+    name = Kate Tsuyu
+    email = kate@kxt.io
+    signingkey = 144B2129293B0F59
 [core]
-	editor = kak
-	excludesfile = ~/.gitignore
+    editor = kak
+    excludesfile = ~/.gitignore
 [color]
-	status = auto
-	branch = auto
-	interactive = auto
-	diff = auto
+    status = auto
+    branch = auto
+    interactive = auto
+    diff = auto
 [gpg]
-	program = gpg2
+    program = gpg2
 [pull]
-	rebase = true
+    rebase = true
 [commit]
-	gpgsign = true
+    gpgsign = true
 [init]
-	defaultBranch = dev
+    defaultBranch = dev
