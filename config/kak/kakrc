@@ -134,8 +134,9 @@ hook global BufWritePost .* %{
     }
 }
 
-# Add line numbers to every buffer.
+# Enable line numbers and soft-wrapping.
 add-highlighter global/ number-lines
+add-highlighter global/ wrap
 
 # Disable assistant for cleaner interface. Nothing personal.
 set-option -add global ui_options ncurses_assistant=none
