@@ -24,7 +24,7 @@ evaluate-commands %sh{
     b_cyan='rgb:41fadf'
     b_white='rgb:f8f8f8'
 
-    echo "
+    printf '%s' "
         face global value ${n_red}
         face global type ${n_yellow}
         face global variable ${n_red}

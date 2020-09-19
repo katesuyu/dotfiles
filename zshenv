@@ -36,3 +36,7 @@ unset -f prepend
 # Integrate Kakoune with the rest of the system.
 export VISUAL='kak'
 export KAKOUNE_POSIX_SHELL=$(which bash)
+
+# Add Homebrew-Linux variables to PATH if Homebrew is installed.
+[ -x "/home/linuxbrew/.linuxbrew/bin/brew" ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+[ -x "${HOME}/.linuxbrew/bin/brew" ] && eval "$("${HOME}/linuxbrew/.linuxbrew/bin/brew" shellenv)"

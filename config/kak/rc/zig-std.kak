@@ -8,7 +8,7 @@ zig-std -docstring %{
         case "${#}" in
             0) printf "zig-std 'std.zig'\n" ;;
             1) cd "${HOME}/.local/zig/lib/zig/std" || exit 1
-               L=$(realpath "${1}" | head -c -1; echo '.') || exit 1
+               L=$(realpath "${1}" | head -c -1; printf '.') || exit 1
                printf "edit -existing '"
                printf "%s" "${L%?}" | sed "s/'/''/g"
                printf "'\n" ;;
