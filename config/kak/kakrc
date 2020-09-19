@@ -37,6 +37,19 @@ plug "ul/kak-lsp" commit "f325bacc7fb595f971d7b8a9aca3e5b8d3b0a22d" do %{
         printf "'"
     }
 
+    # Configure the Zig language server if it hasn't already been configured.
+    nop %sh{ [ ! -e "${HOME}/.config/zls.json" ] && printf '%s\n' \
+'{
+    "enable_snippets": false,
+    "zig_exe_path": "'"${HOME}/.local/zig/zig"'",
+    "zig_lib_path": "'"${HOME}/.local/zig/lib/zig"'",
+    "build_runner_path": "'"${HOME}/.local/zls/bin/build_runner.zig"'",
+    "warn_style": false,
+    "enable_semantic_tokens": true,
+    "operator_completions": false
+}' >"${HOME}/.config/zls.json"
+    }
+
     # Enable the Zig language server and its semantic token support.
     hook global WinSetOption filetype=(zig) %{
         hook window -group semantic-tokens BufReload .* lsp-semantic-tokens
