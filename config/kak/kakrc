@@ -25,7 +25,13 @@ plug "ul/kak-lsp" commit "f325bacc7fb595f971d7b8a9aca3e5b8d3b0a22d" do %{
     # put it in ~/.config/kak-lsp/kak-lsp.toml, so I take it into my own hands.
     set-option global lsp_cmd %sh{
         [ ! -e "${kak_config}/kak-lsp.toml" ] && \
-            cp "${kak_config}/plugins/plug.kak/kak-lsp.toml" "${kak_config}/kak-lsp.toml"
+            cp "${kak_config}/plugins/kak-lsp/kak-lsp.toml" "${kak_config}/kak-lsp.toml" && \
+            { printf '\n[language.zig]\n'
+              printf 'filetypes = ["zig"]\n'
+              printf 'roots = ["build.zig"]\n'
+              printf 'command = "'
+              printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g'
+              printf '"\n'; } >>"${kak_config}/kak-lsp.toml"
         printf "%s -c '" "${kak_opt_lsp_cmd}"
         printf "%s" "${kak_config}/kak-lsp.toml" | sed "s/'/'\\\\''/g"
         printf "'"
