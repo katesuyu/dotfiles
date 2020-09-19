@@ -35,4 +35,4 @@ unset -f prepend
 
 # Integrate Kakoune with the rest of the system.
 export VISUAL='kak'
-export KAKOUNE_POSIX_SHELL="/bin/bash"
+export KAKOUNE_POSIX_SHELL=$(which bash)
