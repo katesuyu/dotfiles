@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: 0BSD
+
+# Bootstrap the plugin manager, loading its commands and kakrc highlighting.
+nop %sh{
+    [ ! -e "${kak_config}/plugins/plug.kak" ] && \
+    mkdir -p "${kak_config}/plugins" && \
+    git clone 'https://github.com/robertmeta/plug.kak.git' "${kak_config}/plugins/plug.kak" >&2
+}
+source "%val{config}/plugins/plug.kak/rc/plug.kak"
+plug "robertmeta/plug.kak" noload
+
+# My personal Kakoune colorscheme.
+colorscheme joule
+
+# I use this specific commit as later commits drop support for the standardized
+# semantic highlighting method, opting to use an experimental version instead.
+# The Zig language server, at least, does not use this experimental version.
+plug "ul/kak-lsp" commit "f325bacc7fb595f971d7b8a9aca3e5b8d3b0a22d" do %{
+    cargo install --locked --force --path .
+} config %{
+    # Load colorscheme here too since kak-lsp overrides faces.
+    colorscheme joule
+    
+    # For some reason kak-lsp fails to find my config despite the readme saying to
+    # put it in ~/.config/kak-lsp/kak-lsp.toml, so I take it into my own hands.
+    set-option global lsp_cmd %sh{
+        [ ! -e "${kak_config}/kak-lsp.toml" ] && \
+            cp "${kak_config}/plugins/plug.kak/kak-lsp.toml" "${kak_config}/kak-lsp.toml"
+        printf "%s -c '" "${kak_opt_lsp_cmd}"
+        printf "%s" "${kak_config}/kak-lsp.toml" | sed "s/'/'\\\\''/g"
+        printf "'"
+    }
+
+    # Enable the Zig language server and its semantic token support.
+    hook global WinSetOption filetype=(zig) %{
+        hook window -group semantic-tokens BufReload .* lsp-semantic-tokens
+        hook window -group semantic-tokens NormalIdle .* lsp-semantic-tokens
+        hook window -group semantic-tokens InsertIdle .* lsp-semantic-tokens
+        hook -once -always window WinSetOption filetype=.* %{
+            remove-hooks window semantic-tokens
+        }
+        lsp-enable-window
+    }
+    hook global KakEnd .* lsp-exit
+
+    # Add kakrc highlighting for the kak-lsp's commands.
+    try %{
+        require-module kak
+        try %{
+            add-highlighter shared/kakrc/code/lsp_keywords regex '\blsp((-| )(\w|-)+)?\b' 0:keyword
+        } catch %{
+            echo -debug "kak-lsp: Can't declare highlighters for 'kak' filetype."
+            echo -debug "         Detailed error: %val{error}"
+        }
+    }
+}
+
+# Keybind to comment/uncomment selected lines.
+map -docstring 'comment out selected lines' global normal '#' ': comment-line<ret>'
+
+# Handles soft tabbing better than the naive approach.
+plug "andreyorst/smarttab.kak" defer smarttab %{
+    set-option global softtabstop 4
+} config %{
+    hook global WinSetOption filetype=.* expandtab
+}
+
+# https://github.com/mawww/kakoune/wiki/Indentation-and-Tabulation
+# Use <tab> for completions while completion menu is open.
+hook global InsertCompletionShow .* %{
+    try %{
+        # This command temporarily removes cursors preceded by whitespace; if
+        # there are no cursors left, it raises an error, does not continue to
+        # execute the mapping commands, and the error is eaten by the `try`
+        # command so no warning appears.
+        execute-keys -draft 'h<a-K>\h<ret>'
+
+        # Use <tab> and <s-tab> to cycle through completions.
+        map window insert <tab> <c-n>
+        map window insert <s-tab> <c-p>
+
+        # Allow me to use <a-tab> to indent even with completion menu open.
+        hook window -group force-indent InsertKey <a-tab> %{
+            execute-keys -itersel -with-maps -with-hooks '<c-o><tab><c-o>'
+        }
+    }
+}
+
+# Use <tab> for indentation when completion menu is closed.
+hook global InsertCompletionHide .* %{
+    unmap window insert <tab> <c-n>
+    unmap window insert <s-tab> <c-p>
+    remove-hooks window force-indent
+}
+
+# Make current directory relative to current file.
+hook global WinDisplay .* %{
+    evaluate-commands %sh{
+        case "${kak_buffile}" in
+            '*'*'*') ;;
+            *) printf "try 'change-directory ''"
+            dirname "${kak_buffile}" | head -c -1 | sed "s/'/''''/g"
+            printf "'''\n" ;;
+        esac
+    }
+}
+hook global BufWritePost .* %{
+    evaluate-commands %sh{
+        case "${kak_buffile}" in
+            '*'*'*') ;;
+            *) printf "try 'change-directory ''"
+            dirname "${kak_buffile}" | head -c -1 | sed "s/'/''''/g"
+            printf "'''\n" ;;
+        esac
+    }
+}
+
+# Add line numbers to every buffer.
+add-highlighter global/ number-lines
+
+# Disable assistant for cleaner interface. Nothing personal.
+set-option -add global ui_options ncurses_assistant=none
+
+# Load other scripts but don't let errors in one break the whole editor.
+evaluate-commands %sh{
+    for file in "${kak_config}/rc/"*'.kak'; do
+        printf "try 'source ''"
+        printf '%s' "${file}" | sed "s/'/''''/g"
+        printf "'''\n"
+    done
+}

@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+{ [ "${#}" -eq 0 ] || cd "$(dirname "${1}")" 2>/dev/null; } && \
+git_repo=$(git rev-parse --show-toplevel 2>/dev/null) && \
+cd "${git_repo}" 2>/dev/null && {
+    readme= ; title= ;
+    for ext in '.md' '.adoc' '.asciidoc' '.asc'; do
+        [ -f "README${ext}" ] && readme="README${ext}" && break
+    done
+    case "${readme}" in
+        '') ;;
+        *'.md') readme=$(grep '^#[^#]' "${readme}" | sed 's/^# *//;s/^\([^\r]*\)\r.*$/\1/') ;;
+        *) readme=$(asciidoctor -b manpage -o - "${readme}" 2>/dev/null \
+            | grep 'Title: ' -m 1 | sed 's/^.*Title: //;s/^\([^\r]*\)\r.*$/\1/') ;;
+    esac
+    [ -n "${readme}" ] || readme=$(basename "${git_repo}")
+    printf '%s' "${readme}"
+}

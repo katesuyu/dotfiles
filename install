@@ -1,0 +1,42 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+
+# Run `ln -f` if the destination is a symlink, or `ln -i` otherwise.
+ln_fi () {
+    mkdir -p "${1}" || return
+    if [ -L "${1}/$(basename "${2}")" ]; then
+        ln -srft "${1}" "${2}"
+    else
+        ln -srit "${1}" "${2}"
+    fi
+}
+ln_Tfi () {
+    mkdir -p "$(dirname "${1}")" || return
+    if [ -L "${1}" ]; then
+        ln -Tsrf "${2}" "${1}"
+    else
+        ln -Tsri "${2}" "${1}"
+    fi
+}
+
+# Link dotfiles needed for correct system operation.
+ln_Tfi "${HOME}/.zshenv" "$(pwd)/zshenv"
+ln_Tfi "${HOME}/.zshrc" "$(pwd)/zshrc"
+ln_Tfi "${HOME}/.gitconfig" "$(pwd)/gitconfig"
+for file in "$(pwd)/scripts/"*; do
+    ln_fi "${HOME}/scripts" "${file}"
+done
+
+# Link personal Kakoune colorschemes.
+for file in "$(pwd)/config/kak/colors/"*; do
+    ln_fi "${HOME}/.config/kak/colors" "${file}"
+done
+
+# Link kakrc and its sub-files.
+ln_fi "${HOME}/.config/kak" "$(pwd)/config/kak/kakrc"
+ln_fi "${HOME}/.config/kak" "$(pwd)/config/kak/rc"
+
+# Link license and gitignore templates.
+ln_fi "${HOME}/templates" "$(pwd)/templates/gitignore"
+ln_fi "${HOME}/templates" "$(pwd)/templates/licenses"
+ln_fi "${HOME}/templates" "$(pwd)/templates/license-headers"

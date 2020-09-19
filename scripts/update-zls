@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: 0BSD
+[ -z "${ZLSDIR}" ] && ZLSDIR="${HOME}/.local/zls"
+printf 'Checking for ZLS install\n' >&2
+if [ -e "${ZLSDIR}" ]; then
+    # Pull updates to ZLS or its dependencies.
+    printf 'Using ZLS install at %s\n' "${ZLSDIR}" >&2
+    cd "${ZLSDIR}" || exit
+    git pull --recurse-submodules >&2
+else
+    # Clone the repo so the script can be used on a fresh system.
+    mkdir -p "$(basename "${ZLSDIR}")" || exit
+    git clone --recurse-submodules 'https://github.com/zigtools/zls.git' "${ZLSDIR}" >&2 || exit
+    cd "${ZLSDIR}" || exit
+    git config pull.rebase false >&2
+fi
+
+# Always attempt to build, even if we didn't pull any updates. Zig caches builds,
+# so if nothing else changed to force us to rebuild, this command is instant.
+zig build -Drelease-safe -Ddata_version=master --prefix .

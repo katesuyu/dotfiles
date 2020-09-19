@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: 0BSD
+
+= dotfiles
+:0bsd-license: https://github.com/katesuyu/dotfiles/blob/dev/LICENSE
+
+Personal dotfiles for backup and reference purposes.
+
+== License
+
+This repository is licensed under the {0bsd-license}[BSD 0-Clause License].
