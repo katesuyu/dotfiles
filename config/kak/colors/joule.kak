@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: 0BSD
 
 # This colorscheme is WIP: it highlights most things correctly, but due
-# to a few faces not being defined here, some things are not rendered
-# in the intended color.
+# to a few faces not being defined here, some faces fall back to default
+# terminal colors. This will be corrected as needed over tine.
 evaluate-commands %sh{
     background='rgb:000000'
     foreground='rgb:eaeaea'
@@ -36,6 +36,10 @@ evaluate-commands %sh{
         face global attribute ${b_yellow}
         face global comment ${n_black}
         face global meta ${n_red}
+        face global title keyword
+        face global header keyword
+        face global bullet value
+        face global list string
 
         face global Default ${foreground},${background}
         face global LineNumbers ${foreground},rgb:333333
