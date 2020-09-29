@@ -19,6 +19,9 @@ ln_Tfi () {
     fi
 }
 
+# Without this I would have an aneurysm.
+cd "$(dirname "${0}")"
+
 # Link dotfiles needed for correct system operation.
 ln_Tfi "${HOME}/.zshenv" "$(pwd)/zshenv"
 ln_Tfi "${HOME}/.zshrc" "$(pwd)/zshrc"
