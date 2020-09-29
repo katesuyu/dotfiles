@@ -1,10 +1,6 @@
 #!/usr/bin/env zsh
 # SPDX-License-Identifier: 0BSD
 
-# Useful environment variables for Zig.
-export CC="zigcc"
-export CXX="zigc++"
-
 # Because these programs are too helpless to pick these
 # defaults themselves, apparently.
 export GPG_TTY="$(tty)"
@@ -29,7 +25,6 @@ append () {
 append "${HOME}/.local/bin/proton"
 append "${HOME}/.cargo/bin"
 append "${HOME}/.local/zig"
-prepend "${HOME}/scripts"
 unset -f append
 unset -f prepend
 

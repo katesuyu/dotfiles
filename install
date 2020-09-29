@@ -24,9 +24,6 @@ ln_Tfi "${HOME}/.zshenv" "$(pwd)/zshenv"
 ln_Tfi "${HOME}/.zshrc" "$(pwd)/zshrc"
 ln_Tfi "${HOME}/.gitconfig" "$(pwd)/gitconfig"
 ln_Tfi "${HOME}/.gitignore" "$(pwd)/gitignore"
-for file in "$(pwd)/scripts/"*; do
-    ln_fi "${HOME}/scripts" "${file}"
-done
 
 # Link personal Kakoune colorschemes.
 for file in "$(pwd)/config/kak/colors/"*; do
