@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: 0BSD
 main () {
     case "${0}" in
-        *'/zig' | 'zig') wrap-zig "${@}" ;;
+        *'/zig' | 'zig') wrap_zig "${@}" ;;
     esac
     usage
 }
@@ -19,12 +19,12 @@ usage () { printf 'Usage: %s [command] [options]\nCommands:%s' "${0}" '
 
 require () {
     while [ "${#}" -gt 0 ]; do
-        type "${1}" >&- && shift && continue
+        type "${1}" >/dev/null && shift && continue
         printf 'missing dependency: %s\n' "${1}" >&2 && exit 1
     done
 }
 
-wrap-zig () {
+wrap_zig () {
     case "${1}" in
         '+'*) read-alias "${1#?}" && shift ;;
         *) read-alias default ;;
@@ -39,7 +39,7 @@ wrap-zig () {
 
 zig=zig
 system=unknown
-type uname >&- && \
+type uname >/dev/null && \
 case "$(uname)" in
     'Windows'* | 'MSYS'* | 'MINGW'* | 'CYGWIN'*)
         system=windows
