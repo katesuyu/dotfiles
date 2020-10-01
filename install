@@ -30,7 +30,7 @@ ln_Tfi "${HOME}/.gitignore" "$(pwd)/gitignore"
 
 # Link personal Kakoune colorschemes.
 for file in "$(pwd)/config/kak/colors/"*; do
-    [ "${file}" == "$(pwd)/config/kak/colors/*" ] && [ ! -e "${file}" ] && break
+    [ "${file}" = "$(pwd)"'/config/kak/colors/*' ] && [ ! -e "${file}" ] && break
     ln_fi "${HOME}/.config/kak/colors" "${file}"
 done
 
