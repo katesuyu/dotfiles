@@ -3,8 +3,7 @@
 main () {
     case "${0}" in
         # We are symlinked to Zig. This allows us to choose a Zig installation
-        # depending on environment configuration instead of simply using the
-        # global default of ~/.local/bin (or other appropriate system location).
+        # based on environment configuration.
         'zig' | *'/zig') wrap_zig "${@}" ;;
     esac
     [ "${#}" -eq 0 ] && usage >&2 && exit 1
@@ -52,6 +51,7 @@ invalid () {
     printf '%s\nSee `%s --help` for detailed usage information\n' "${message}" "${0}" >&2
     exit 1
 }
+
 # ${1..} = commands required to perform the requested task
 # To succeed, all commands must be executable in the current environment.
 # On failure, print an error message and exit.
@@ -62,7 +62,7 @@ require () {
     done
 }
 
-# ${1} = version number OR user-specified alias
+# ${1} = version or alias identifier
 # On success, set the `version` variable to the canonical version corresponding
 # to the provided parameter. On failure, print an error message and exit.
 read_alias () {
@@ -97,8 +97,7 @@ wrap_zig () {
     esac
 }
 
-# Determine the current operating system for the purpose of accessing
-# the Zig download index and using the correct file formats.
+# Determine the current operating system.
 system=unknown
 [ -n "${KZDL_SYSTEM}" ] && system=${KZDL_SYSTEM}
 [ -z "${KZDL_SYSTEM}" ] && type uname >/dev/null && \
@@ -115,7 +114,7 @@ system=unknown
 [ "${system}" = 'windows' ] && zig='zig.exe'
 [ "${system}" = 'windows' ] || zig='zig'
 
-# Determine the current architecture. This is a work in progress.
+# Determine the current architecture.
 arch=unknown
 [ -n "${KZDL_ARCH}" ] && arch=${KZDL_ARCH}
 [ -z "${KZDL_ARCH}" ] && type uname >/dev/null && \
