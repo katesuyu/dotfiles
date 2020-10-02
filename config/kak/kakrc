@@ -12,10 +12,7 @@ plug "robertmeta/plug.kak" noload
 # My personal Kakoune colorscheme.
 colorscheme joule
 
-# I use this specific commit as later commits drop support for the standardized
-# semantic highlighting method, opting to use an experimental version instead.
-# The Zig language server, at least, does not use this experimental version.
-plug "ul/kak-lsp" commit "f325bacc7fb595f971d7b8a9aca3e5b8d3b0a22d" do %{
+plug "ul/kak-lsp" do %{
     cargo install --locked --force --path .
 } config %{
     # Load colorscheme here too since kak-lsp overrides faces.
