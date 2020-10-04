@@ -1,11 +1,23 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
 main () {
-    # Allow configuration of download index JSON.
+    # The JSON file where Zig tarballs are listed.
     download_index='https://ziglang.org/download/index.json'
     [ -n "${KZDL_INDEX}" ] && download_index="${KZDL_INDEX}"
 
-    # Determine the current operating system.
+    # The printf format string for the downloaded tarball.
+    download_fmt='https://ziglang.org/builds/zig-%s-%s-%s.%s'
+    [ -n "${KZDL_MIRROR_FMT}" ] && download_fmt="${KZDL_MIRROR_FMT}"
+
+    # The printf format for versioned folder names.
+    folder_fmt='zig-%s'
+    [ -n "${KZDL_FOLDER_FMT}" ] && folder_fmt="${KZDL_FOLDER_FMT}"
+
+    # The channels that can be found in the download index.
+    channels='stable:nightly'
+    [ -n "${KZDL_CHANNELS}" ] && channels="${KZDL_CHANNELS}"
+
+    # The current operating system for cache and download purposes.
     system=unknown
     [ -n "${KZDL_SYSTEM}" ] && system=${KZDL_SYSTEM}
     [ -z "${KZDL_SYSTEM}" ] && type uname >/dev/null && \
@@ -22,7 +34,7 @@ main () {
     [ "${system}" = 'windows' ] && zig='zig.exe'
     [ "${system}" = 'windows' ] || zig='zig'
 
-    # Determine the current architecture.
+    # The current architecture for download purposes.
     arch=unknown
     [ -n "${KZDL_ARCH}" ] && arch=${KZDL_ARCH}
     [ -z "${KZDL_ARCH}" ] && type uname >/dev/null && \
@@ -37,7 +49,7 @@ main () {
             'sun4u' | 'sparc') arch=sparc ;;
         esac
 
-    # Try to find an appropriate location to install everything.
+    # Attempt to locate a good place to store files.
     if [ -n "${KZDL_ROOT}" ]; then
         root_path=${KZDL_ROOT}
     elif [ -n "${XDG_DATA_HOME}" ]; then
@@ -66,27 +78,8 @@ main () {
     esac
 }
 
-usage () { printf 'Usage: %s [command] [options]\n\nCommands:%s' "${0}" '
-  clean     clean unused Zig versions based on configured cleaning policy
-  default   configure the default Zig version
-  install   install a specific Zig version
-  pin       create aliases and protect Zig versions from deletion
-  query     list installed Zig versions and check for updates
-  remove    remove specified Zig version(s)
-  run       invoke Zig compiler specified by a version or alias identifier
-  update    update Zig installation based on preferences
-'; }
-
 # Print an 'invalid usage' error message, with the specific text dependent
-# on the provided parameter ${1} and, for some, a sub-parameter ${2}.
-# ${1} possible values:
-#   -- = unexpected end-of-parameter mark
-#   option = unrecognized option: ${2}
-#   duplicate = option specified twice: ${2}
-#   command = unrecognized command: ${2}
-#   missing-command = expected a command after ${2}
-#   missing-value = expected a value after ${2}
-#   custom = ${2}
+# on the provided parameters ${1} and ${2}
 invalid () {
     case "${1}" in
         '--') message="Unexpected end-of-parameter mark: --" ;;
@@ -95,7 +88,8 @@ invalid () {
         'command') message="Unrecognized command: ${2}" ;;
         'missing-command') message="Expected a command after ${2}" ;;
         'missing-value') message="Expected a value after ${2}" ;;
-        'unknown-alias') message="Unrecognized version / alias identifier: ${2}" ;;
+        'unknown-alias') message="Unrecognized compiler alias: ${2}" ;;
+        'unknown-version') message="Unrecognized compiler version: ${2}" ;;
         'dangling-alias') message="Alias does not correspond to an installed version: ${2}" ;;
         'custom') message="${2}" ;;
     esac
@@ -123,49 +117,94 @@ read_alias () {
 # ${1} = Zig version / alias identifier to execute
 # If the version / alias identifier resolves to an existing Zig installation,
 # forward ${2..} to the Zig compiler. Otherwise, exit with an error message.
-run_zig () {
-    [ "${#}" -eq 0 ] && {
-        printf 'Usage: %s run [version|alias] [args...]\n%s\n' "${0}" \
-        '  invoke Zig compiler specified by a version or alias identifier' >&2
-        exit 1
-    }
-    read_alias "${1}"
-    [ -x "${root_path}/store/zig/${version}/${zig}" ] && {
-        shift
-        "${root_path}/store/zig/${version}/${zig}" "${@}"
-        exit
-    }
-    invalid dangling-alias "${1}"
-}
 
 # If the first parameter is in the form `+[version|alias]`, the version/alias
 # string will be used to select the Zig compiler. All remaining parameters,
 # aside from the aforementioned special case, are forwarded directly to Zig.
 wrap_zig () {
     case "${1}" in
-        '+'*) version=${1#?} && shift && run_zig "${version}" "${@}" ;;
-        *) run_zig default "${@}" ;;
+        '+'*) version=${1#?} && shift && run "${version}" "${@}" ;;
+        *) run default "${@}" ;;
     esac
+}
+
+# Usage text for the various available subcommands.
+usage () { printf 'Usage: %s [command] [params]\n\nCommands:%s' "${0}" '
+  clean     clean unused Zig versions based on configured cleaning policy
+  default   configure the default Zig version
+  install   install a specific Zig version
+  pin       create aliases and protect Zig versions from deletion
+  query     list installed Zig versions and check for updates
+  remove    remove specified Zig version(s)
+  run       invoke Zig compiler specified by a version or alias identifier
+  update    update Zig installation based on preferences
+'; }
+
+# Remove unused Zig versions from subscribed channels, excluding specific versions
+# that may have been pinned. The precise cleaning policy is user-configurable.
+clean () {
+    printf 'Not yet implemented\n' >&2 && exit 1
+}
+
+# Configure the default version of Zig. This is a convenience shortcut equivalent
+# to using `kzdl pin` to assign the `default` alias to a version or channel.
+default () {
+    printf 'Not yet implemented\n' >&2 && exit 1
 }
 
 # Install Zig toolchains and subscribe to updates for stable/nightly.
 install () {
-    usage () { printf 'Usage: %s install [options] [targets..]\n\nTargets:%s' "${0}" '
-  stable            download the latest stable toolchain
-  nightly           download the latest nightly toolchain
-  [version]         specify a stable version to download
-  [version]+[hash]  specify a nighty version to download
-
-Options:
-  --once            do not subscribe to updates (for stable or nightly only)
-  --no-pin          do not pin the downloaded compiler
-  --pin [alias]     pin the Zig compiler with the provided alias
-  --pin-version     pin the Zig compiler with its version identifier
-  --pin-date        pin the Zig compiler with its build date
+    usage () { printf 'Usage: %s install [options] [target]\n\nOptions:%s' "${0}" '
+  --once         retrieve a single version from the channel without subscribing to it
+  --pin [name]   pin the target with the provided string as an alias
+  --pin-date     pin the target with its build date as an alias
+  --pin-version  pin the target with its version as an alias
+  --temp [name]  assign the target an alias but do not pin it
+  --version      the specified target is a version, not a channel or alias
 ';  }
     [ "${#}" -eq 0 ] && usage >&2 && exit 1
     [ "${1}" = '--help' ] && usage && exit
     exit
+}
+
+# Create aliases to a specific version or channel of Zig, and pin versions to
+# protect them from `kzdl clean` or `kzdl update` (depending on configuration).
+pin () {
+    printf 'Not yet implemented\n' >&2 && exit 1
+}
+
+# Query if the provided channel (or any subscribed channels, if no argument is
+# provided) has an update available, returning the version if so.
+query () {
+    printf 'Not yet implemented\n' >&2 && exit 1
+}
+
+# Remove the specified Zig version. If the target is a channel, removes the
+# implicit pin on the configured amount of versions, and by default also
+# removes those installations if no pins remain.
+remove () {
+    printf 'Not yet implemented\n' >&2 && exit 1
+}
+
+# Forward arguments to the Zig compiler identified by the provided alias.
+run () {
+    [ "${#}" -eq 0 ] && {
+        printf 'Usage: %s run [alias] [args...]\n' "${0}" >&2
+        exit 1
+    }
+    read_alias "${1}"
+    [ -x "${folder}/zig" ] && {
+        shift
+        "${folder}/zig" "${@}"
+        exit
+    }
+    invalid dangling-alias "${1}"
+}
+
+# Update the specified channel, or all subscribed channels if no argument is provided.
+# If configured to do so, may automatically trigger a clean once updated.
+update () {
+    printf 'Not yet implemented\n' >&2 && exit 1
 }
 
 main "${@}"
