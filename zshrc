@@ -30,7 +30,7 @@ man () {
 __man () {
     printf "try 'man ''"
     printf '%s' "${1}" | sed "s/'/''''/g"
-    printf "''' catch 'quit 39'"
+    printf "'';delete-buffer ''*scratch*''' catch 'quit 39'"
 }
 
 # Open Kakoune to browse the Zig standard library.
