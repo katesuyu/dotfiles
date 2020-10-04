@@ -40,7 +40,7 @@ zigstd () {
         1) local __zigstd=$(
             printf "try 'zig-std ''"
             printf '%s' "${1}" | sed "s/'/''''/g"
-            printf "''' catch 'quit 39'"
+            printf "'';delete-buffer ''*scratch*''' catch 'quit 39'"
         ) && env -u '__zigstd' -- kak -e "${__zigstd}"
         local err="${?}"
         [ "${err}" -eq 39 ] && \

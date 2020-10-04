@@ -1,6 +1,55 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
 main () {
+    # Allow configuration of download index JSON.
+    download_index='https://ziglang.org/download/index.json'
+    [ -n "${KZDL_INDEX}" ] && download_index="${KZDL_INDEX}"
+
+    # Determine the current operating system.
+    system=unknown
+    [ -n "${KZDL_SYSTEM}" ] && system=${KZDL_SYSTEM}
+    [ -z "${KZDL_SYSTEM}" ] && type uname >/dev/null && \
+        case "$(uname)" in
+            'Windows'* | 'MSYS'* | 'MINGW'* | 'CYGWIN'*) system=windows ;;
+            'Darwin'*) system=macos ;;
+            'NetBSD'*) system=netbsd ;;
+            'FreeBSD'*) system=freebsd ;;
+            'OpenBSD'*) system=openbsd ;;
+            'DragonFly'*) system=dragonflybsd ;;
+            'SunOS'*) system=solaris ;;
+            'Linux'*) system=linux ;;
+        esac
+    [ "${system}" = 'windows' ] && zig='zig.exe'
+    [ "${system}" = 'windows' ] || zig='zig'
+
+    # Determine the current architecture.
+    arch=unknown
+    [ -n "${KZDL_ARCH}" ] && arch=${KZDL_ARCH}
+    [ -z "${KZDL_ARCH}" ] && type uname >/dev/null && \
+        case "$(uname -m)" in
+            'x86_64' | 'amd64') arch=x86_64 ;;
+            'x86' | 'i386' | 'i686' | 'i86pc') arch=i386 ;;
+            'aarch64') arch=aarch64 ;;
+            'armv6'*) arch=armv6kz ;;
+            'armv7'*) arch=armv7a ;;
+            'riscv64') arch=riscv64 ;;
+            'sparc64' | 'sparcv9') arch=sparcv9 ;;
+            'sun4u' | 'sparc') arch=sparc ;;
+        esac
+
+    # Try to find an appropriate location to install everything.
+    if [ -n "${KZDL_ROOT}" ]; then
+        root_path=${KZDL_ROOT}
+    elif [ -n "${XDG_DATA_HOME}" ]; then
+        root_path=${XDG_DATA_HOME}/kzdl
+    else
+        case "${system}" in
+            'macos') root_path=${HOME}/Library/'Application Support'/kzdl ;;
+            'windows') root_path=${LOCALAPPDATA}/kzdl ;;
+            *) root_path=${HOME}/.local/share/kzdl ;;
+        esac
+    fi
+
     case "${0}" in
         # We are symlinked to Zig. This allows us to choose a Zig installation
         # based on environment configuration.
@@ -12,11 +61,13 @@ main () {
         '--') invalid -- ;;
         '-'*) invalid option "${1}" ;;
         'run') shift && run_zig "${@}" ;;
+        'install') shift && install "${@}" ;;
         *) invalid command "${1}" ;;
     esac
 }
 
-usage () { printf 'Usage: %s [command] [options]\nCommands:%s' "${0}" '
+usage () { printf 'Usage: %s [command] [options]\n\nCommands:%s' "${0}" '
+  clean     clean unused Zig versions based on configured cleaning policy
   default   configure the default Zig version
   install   install a specific Zig version
   pin       create aliases and protect Zig versions from deletion
@@ -66,7 +117,7 @@ require () {
 # On success, set the `version` variable to the canonical version corresponding
 # to the provided parameter. On failure, print an error message and exit.
 read_alias () {
-    printf ''
+    true
 }
 
 # ${1} = Zig version / alias identifier to execute
@@ -97,49 +148,24 @@ wrap_zig () {
     esac
 }
 
-# Determine the current operating system.
-system=unknown
-[ -n "${KZDL_SYSTEM}" ] && system=${KZDL_SYSTEM}
-[ -z "${KZDL_SYSTEM}" ] && type uname >/dev/null && \
-    case "$(uname)" in
-        'Windows'* | 'MSYS'* | 'MINGW'* | 'CYGWIN'*) system=windows ;;
-        'Darwin'*) system=macos ;;
-        'NetBSD'*) system=netbsd ;;
-        'FreeBSD'*) system=freebsd ;;
-        'OpenBSD'*) system=openbsd ;;
-        'DragonFly'*) system=dragonflybsd ;;
-        'SunOS'*) system=solaris ;;
-        'Linux'*) system=linux ;;
-    esac
-[ "${system}" = 'windows' ] && zig='zig.exe'
-[ "${system}" = 'windows' ] || zig='zig'
+# Install Zig toolchains and subscribe to updates for stable/nightly.
+install () {
+    usage () { printf 'Usage: %s install [options] [targets..]\n\nTargets:%s' "${0}" '
+  stable            download the latest stable toolchain
+  nightly           download the latest nightly toolchain
+  [version]         specify a stable version to download
+  [version]+[hash]  specify a nighty version to download
 
-# Determine the current architecture.
-arch=unknown
-[ -n "${KZDL_ARCH}" ] && arch=${KZDL_ARCH}
-[ -z "${KZDL_ARCH}" ] && type uname >/dev/null && \
-    case "$(uname -m)" in
-        'x86_64' | 'amd64') arch=x86_64 ;;
-        'x86' | 'i386' | 'i686' | 'i86pc') arch=i386 ;;
-        'aarch64') arch=aarch64 ;;
-        'armv6'*) arch=armv6kz ;;
-        'armv7'*) arch=armv7a ;;
-        'riscv64') arch=riscv64 ;;
-        'sparc64' | 'sparcv9') arch=sparcv9 ;;
-        'sun4u' | 'sparc') arch=sparc ;;
-    esac
-
-# Try to find an appropriate location to install everything.
-if [ -n "${KZDL_ROOT}" ]; then
-    root_path=${KZDL_ROOT}
-elif [ -n "${XDG_DATA_HOME}" ]; then
-    root_path=${XDG_DATA_HOME}/kzdl
-else
-    case "${system}" in
-        'macos') root_path=${HOME}/Library/'Application Support'/kzdl ;;
-        'windows') root_path=${LOCALAPPDATA}/kzdl ;;
-        *) root_path=${HOME}/.local/share/kzdl ;;
-    esac
-fi
+Options:
+  --once            do not subscribe to updates (for stable or nightly only)
+  --no-pin          do not pin the downloaded compiler
+  --pin [alias]     pin the Zig compiler with the provided alias
+  --pin-version     pin the Zig compiler with its version identifier
+  --pin-date        pin the Zig compiler with its build date
+';  }
+    [ "${#}" -eq 0 ] && usage >&2 && exit 1
+    [ "${1}" = '--help' ] && usage && exit
+    exit
+}
 
 main "${@}"
