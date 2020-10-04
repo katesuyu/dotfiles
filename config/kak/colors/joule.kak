@@ -27,7 +27,7 @@ evaluate-commands %sh{
     printf '%s' "
         face global value ${n_red}
         face global type ${n_yellow}
-        face global variable ${n_red}
+        face global variable ${foreground}
         face global function ${b_magenta}
         face global string ${b_blue}
         face global error ${foreground},${n_red}
@@ -38,6 +38,7 @@ evaluate-commands %sh{
         face global meta ${n_red}
         face global title keyword
         face global header keyword
+        face global module variable
         face global bullet value
         face global list string
 
