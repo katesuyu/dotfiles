@@ -9,16 +9,16 @@ evaluate-commands %sh{
     unfocused='rgb:070707'
     n_black='rgb:969896'
     n_red='rgb:ff2c6d'
-    n_green='rgb:19f9d8'
+    n_green='rgb:f7d7ff'
     n_yellow='rgb:ffb86c'
-    n_blue='rgb:4589f9'
-    n_magenta='rgb:ff75b5'
+    n_blue='rgb:e888a0'
+    n_magenta='rgb:9f8cd5'
     n_cyan='rgb:19f9d8'
     n_white='rgb:f3f3f3'
     b_black='rgb:c6c8c6'
     b_red='rgb:7f70f0'
-    b_green='rgb:41fadf'
-    b_yellow='rgb:9f8cd5'
+    b_green='rgb:ffe77c'
+    b_yellow='rgb:c1cada'
     b_blue='rgb:42d1ef'
     b_magenta='rgb:ff9ecb'
     b_cyan='rgb:41fadf'
@@ -26,21 +26,22 @@ evaluate-commands %sh{
 
     printf '%s' "
         face global value ${n_red}
-        face global type ${n_yellow}
-        face global variable ${foreground}
+        face global type ${n_blue}
+        face global variable ${b_yellow}
         face global function ${b_magenta}
         face global string ${b_blue}
         face global error ${foreground},${n_red}
-        face global keyword ${b_yellow}
+        face global keyword ${n_magenta}
         face global operator ${foreground}
-        face global attribute ${b_yellow}
+        face global attribute ${n_magenta}
         face global comment ${n_black}
         face global meta ${n_red}
         face global title keyword
         face global header keyword
-        face global module variable
+        face global module ${n_green}
         face global bullet value
         face global list string
+        face global field ${b_yellow}
 
         face global Default ${foreground},${background}
         face global LineNumbers ${foreground},rgb:333333

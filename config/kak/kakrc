@@ -21,14 +21,24 @@ plug "ul/kak-lsp" do %{
     # For some reason kak-lsp fails to find my config despite the readme saying to
     # put it in ~/.config/kak-lsp/kak-lsp.toml, so I take it into my own hands.
     set-option global lsp_cmd %sh{
-        [ ! -e "${kak_config}/kak-lsp.toml" ] && \
-            cp "${kak_config}/plugins/kak-lsp/kak-lsp.toml" "${kak_config}/kak-lsp.toml" && \
-            { printf '\n[language.zig]\n'
-              printf 'filetypes = ["zig"]\n'
-              printf 'roots = ["build.zig"]\n'
-              printf 'command = "'
-              printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g'
-              printf '"\n'; } >>"${kak_config}/kak-lsp.toml"
+        [ ! -e "${kak_config}/kak-lsp.toml" ] && {
+            sedstr='s/\[semantic_tokens\]/\0\n'
+            sedstr="${sedstr}"'struct = "type"\n'
+            sedstr="${sedstr}"'union = "type"\n'
+            sedstr="${sedstr}"'enum = "type"\n'
+            sedstr="${sedstr}"'tagField = "field"\n'
+            sedstr="${sedstr}"'errorTag = "field"\n'
+            sedstr="${sedstr}"'field = "field"\n'
+            sedstr="${sedstr}"'parameter = "variable"/'
+
+            sed "${sedstr}" <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
+            printf '\n[language.zig]\n'
+            printf 'filetypes = ["zig"]\n'
+            printf 'roots = ["build.zig"]\n'
+            printf 'command = "'
+            printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g'
+            printf '"\n'
+        } >"${kak_config}/kak-lsp.toml"
         printf "%s -c '" "${kak_opt_lsp_cmd}"
         printf "%s" "${kak_config}/kak-lsp.toml" | sed "s/'/'\\\\''/g"
         printf "'"
@@ -131,9 +141,17 @@ hook global BufWritePost .* %{
     }
 }
 
+# Helps with readability, and is consistent with variable substitution.
+hook global WinSetOption filetype=(sh|kak) %{
+    set-face window variable value
+    hook -once -always window WinSetOption filetype=.* %{
+        unset-face variable
+    }
+}
+
 # Enable line numbers and soft-wrapping.
 add-highlighter global/ number-lines
-add-highlighter global/ wrap
+add-highlighter global/ wrap -word
 
 # Disable assistant for cleaner interface. Nothing personal.
 set-option -add global ui_options ncurses_assistant=none
