@@ -17,11 +17,17 @@ plug "ul/kak-lsp" do %{
 } config %{
     # Load colorscheme here too since kak-lsp overrides faces.
     colorscheme joule
-    
-    # For some reason kak-lsp fails to find my config despite the readme saying to
-    # put it in ~/.config/kak-lsp/kak-lsp.toml, so I take it into my own hands.
-    set-option global lsp_cmd %sh{
-        [ ! -e "${kak_config}/kak-lsp.toml" ] && {
+
+    # Generate config files for kak-lsp and ZLS to avoid hardcoding ${HOME}.
+    nop %sh{
+        # ${1} = file to overwrite
+        # ${2} = contents to write
+        # Only write to file if nonexistent or contents are outdated.
+        overwrite () {
+            { [ -e "${1}" ] && printf '%s\n' "${2}" | diff -s -- - "${1}" >/dev/null; } || \
+                printf '%s\n' "${2}" >"${1}"
+        }
+        lsp_config=$(
             sedstr='s/\[semantic_tokens\]/\0\n'
             sedstr="${sedstr}"'struct = "type"\n'
             sedstr="${sedstr}"'union = "type"\n'
@@ -30,31 +36,37 @@ plug "ul/kak-lsp" do %{
             sedstr="${sedstr}"'errorTag = "field"\n'
             sedstr="${sedstr}"'field = "field"\n'
             sedstr="${sedstr}"'parameter = "variable"/'
-
             sed "${sedstr}" <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
+
             printf '\n[language.zig]\n'
             printf 'filetypes = ["zig"]\n'
             printf 'roots = ["build.zig"]\n'
             printf 'command = "'
             printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g'
-            printf '"\n'
-        } >"${kak_config}/kak-lsp.toml"
+            printf '"'
+        ) && overwrite "${kak_config}/kak-lsp.toml" "${lsp_config}"
+        zls_config=$(
+            zig_exe_path="${HOME}/.local/zig/zig" \
+            zig_lib_path="${HOME}/.local/zig/lib/zig" \
+            build_runner_path="${HOME}/.local/zls/bin/build_runner.zig" \
+            jq -n --indent 4 '{
+                warn_style: false,
+                enable_snippets: false,
+                operator_completions: false,
+                enable_semantic_tokens: true,
+                zig_exe_path: env.zig_exe_path,
+                zig_lib_path: env.zig_lib_path,
+                build_runner_path: env.build_runner_path,
+            }'
+        ) && overwrite "${HOME}/.config/zls.json" "${zls_config}"
+    }
+
+    # kak-lsp has a history of not finding config in the default location.
+    # So we manually point it to a location that's more idiomatic anyway.
+    set-option global lsp_cmd %sh{
         printf "%s -c '" "${kak_opt_lsp_cmd}"
         printf "%s" "${kak_config}/kak-lsp.toml" | sed "s/'/'\\\\''/g"
         printf "'"
-    }
-
-    # Configure the Zig language server if it hasn't already been configured.
-    nop %sh{ [ ! -e "${HOME}/.config/zls.json" ] && printf '%s\n' \
-'{
-    "enable_snippets": false,
-    "zig_exe_path": "'"${HOME}/.local/zig/zig"'",
-    "zig_lib_path": "'"${HOME}/.local/zig/lib/zig"'",
-    "build_runner_path": "'"${HOME}/.local/zls/bin/build_runner.zig"'",
-    "warn_style": false,
-    "enable_semantic_tokens": true,
-    "operator_completions": false
-}' >"${HOME}/.config/zls.json"
     }
 
     # Enable the Zig language server and its semantic token support.
