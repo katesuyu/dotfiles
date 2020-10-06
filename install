@@ -2,25 +2,19 @@
 # SPDX-License-Identifier: 0BSD
 
 # Run `ln -f` if the destination is a symlink, or `ln -i` otherwise.
-ln_fi () {
-    mkdir -p "${1}" || return
-    if [ -L "${1}/$(basename "${2}")" ]; then
-        ln -srft "${1}" "${2}"
-    else
-        ln -srit "${1}" "${2}"
-    fi
-}
 ln_Tfi () {
-    mkdir -p "$(dirname "${1}")" || return
+    mkdir -p "$(dirname -- "${1}")" || return
     if [ -L "${1}" ]; then
         ln -Tsrf "${2}" "${1}"
     else
         ln -Tsri "${2}" "${1}"
     fi
 }
+ln_fi () {
+    ln_Tfi "${1}/$(basename -- "${2}")" "${2}"
+}
 
-# Without this I would have an aneurysm.
-cd "$(dirname "${0}")"
+cd "$(dirname -- "$(readlink -ne -- "${0}")")"
 
 # Link dotfiles needed for correct system operation.
 ln_Tfi "${HOME}/.zshenv" "$(pwd)/zshenv"
@@ -30,7 +24,7 @@ ln_Tfi "${HOME}/.gitignore" "$(pwd)/gitignore"
 
 # Link personal Kakoune colorschemes.
 for file in "$(pwd)/config/kak/colors/"*; do
-    [ "${file}" = "$(pwd)"'/config/kak/colors/*' ] && [ ! -e "${file}" ] && break
+    [ ! -e "${file}" ] && continue
     ln_fi "${HOME}/.config/kak/colors" "${file}"
 done
 
