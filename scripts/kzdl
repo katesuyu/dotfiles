@@ -154,13 +154,19 @@ default () {
 
 # Install Zig toolchains and subscribe to updates for stable/nightly.
 install () {
-    usage () { printf 'Usage: %s install [options] [target]\n\nOptions:%s' "${0}" '
+    usage () { printf 'Usage: %s install [options] [channel]\n\nChannels:\n%s\n\nOptions:%s' "${0}" "$(
+        set -f
+        IFS=:
+        for channel in ${channels}; do
+            printf '  %s\n' "${channel}"
+        done
+    )" '
   --once         retrieve a single version from the channel without subscribing to it
   --pin [name]   pin the target with the provided string as an alias
   --pin-date     pin the target with its build date as an alias
   --pin-version  pin the target with its version as an alias
   --temp [name]  assign the target an alias but do not pin it
-  --version      the specified target is a version, not a channel or alias
+  --version      the channel parameter instead takes a version number
 ';  }
     [ "${#}" -eq 0 ] && usage >&2 && exit 1
     [ "${1}" = '--help' ] && usage && exit

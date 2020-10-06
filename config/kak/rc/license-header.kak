@@ -7,18 +7,18 @@ license-header -docstring %{
 } \
 -shell-script-candidates %{
     switches=0
-    while ((${#})); do
+    while [ "${#}" -gt 0 ]; do
         case "${1}" in
-            '--') ((switches+=1)) && shift && break ;;
-            '-'*) ((switches+=1)) && shift ;;
+            '--') true "$((switches+=1))" && shift && break ;;
+            '-'*) true "$((switches+=1))" && shift ;;
             *) break ;;
         esac
     done
     case "$((${kak_token_to_complete}-${switches}))" in
         0) cd "${HOME}/templates/license-headers" && \
             for file in *'.zig'; do
-                head -c -5 <<<"${file}"
-                printf '\n'
+                [ ! -e "${file}" ] && continue
+                printf '%s\n' "${file%????}"
             done ;;
         1) "${kak_config}/rc/project-name" "${kak_buffile}" ;;
     esac
@@ -34,10 +34,10 @@ license-header -docstring %{
 
         # Handle switches
         project=0
-        while ((${#})); do
+        while [ "${#}" -gt 0 ]; do
             case "${1}" in
                 '--') shift && break ;;
-                '-project-copyright') ((${project})) && \
+                '-project-copyright') [ "${project}" -gt 0 ] && \
                     printf 'fail "%s%s"\n' "'license-header' switch " \
                     "'-project-copyright' specified twice" && exit 1
                     project=1 && shift ;;
@@ -47,29 +47,34 @@ license-header -docstring %{
                 *) break ;;
             esac
         done
-        [[ "${#}" -lt 1 || "${#}" -gt 2 ]] && \
+        { [ "${#}" -lt 1 ] || [ "${#}" -gt 2 ]; } && \
             printf '%s\n' "fail %['license-header' wrong argument count]" && exit
 
         # Check if we have a template for the license header.
-        { [[ "${1}" == *$'\n'* ]] || grep -q '[^[:alnum:]]' <<<"${1}" || \
-        [ ! -f "${HOME}/templates/license-headers/${1}.zig" ]; } && \
-            { printf 'fail "%s"\n' "No license header for license '%arg{1}'"; exit; }
+        case "${1}" in
+            *[!a-zA-Z0-9_-]*) false ;;
+            *) [ -f "${HOME}/templates/license-headers/${1}.zig" ] ;;
+        esac || {
+            printf 'fail "%s"\n' "No license header for license '%arg{1}'" && exit
+        }
 
         # Use project name provided through %arg{2} or %opt{project_name}.
         [ "${#}" -eq 2 ] && {
             # Escape hatch for licenses that do not use {project}.
-            [[ "${2}" != '_' ]] && \
-                printf 'set-option window project_name %%arg{%s}\n' "$((${switches}+2))"
+            [ "${2}" != '_' ] && \
+                printf 'set-option window project_name %%arg{%s}\n' "$((${project}+2))"
             execute "${1}" "${2}" && exit
         }
         [ -n "${kak_opt_project_name}" ] && \
             execute "${1}" "${kak_opt_project_name}" && exit
 
         # Infer project name if we have a Git repository and/or README files.
-        name=$("${kak_config}/rc/project-name" "${kak_buffile}") && \
-            printf "set-option window project_name '" && \
-            printf '%s' "${name}" | sed "s/'/''/g" && \
-            printf "'\n" && execute "${1}" "${name}" && exit
+        name=$("${kak_config}/rc/project-name" "${kak_buffile}") && {
+            printf "set-option window project_name '"
+            printf '%s' "${name}" | sed "s/'/''/g"
+            printf "'\n" && execute "${1}" "${name}"
+            exit
+        }
 
         # Handle case where project name is neither specified nor inferred.
         printf "%s\n" "fail 'No project name specified: set %opt{project_name}'"
@@ -83,14 +88,14 @@ license-header -docstring %{
 define-command -hidden -params 3 license-header-execute %{
     evaluate-commands -draft -save-regs '/"|^@FML' %{
         # Load the license header into a register.
-        set-register F %sh{cat "${HOME}/templates/license-headers/${1}.zig"}
+        set-register F %sh{cat -- "${HOME}/templates/license-headers/${1}.zig"}
         # Save the comment line type before we switch to temp buffer.
         set-register M %opt{comment_line}
         # If configured to do so, use "{project} Contributors" to
         # fill in the {author} field. Otherwise, use Git user.name.
         set-register L %sh{
-            ((${3})) && printf '%s Contributors' "${2}" && exit
-            cd "$(dirname "${kak_buffile}")"
+            [ "${3}" -ne 0 ] && printf '%s Contributors' "${2}" && exit
+            cd "$(dirname -- "${kak_buffile}")"
             git config --get user.name
         }
         evaluate-commands -draft %{

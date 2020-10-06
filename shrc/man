@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+man () {
+    printf "try 'man ''"
+    printf '%s' "${1}" | sed "s/'/''''/g"
+    printf "'';delete-buffer ''*scratch*''' catch 'quit 39'"
+}
+case "${#}" in
+    1) kak -e "$(man "${1}")"
+        err=${?}
+        [ "${err}" -eq 39 ] && \
+            printf 'man: No entry for %s in the manual.\n' "${1}" >&2
+        return "${err}" ;;
+    2) case "${2}" in
+        [1-8])
+            kak -e "$(man "${1}(${2})")"
+            err=${?}
+            [ "${err}" -eq 39 ] && \
+                printf 'No entry for %s in section %s of the manual.\n' \
+                "${1}" "${2}" >&2
+            return "${err}" ;;
+        *) printf 'Invalid section: %s\n' "${2}" >&2 && return 39 ;;
+    esac ;;
+    *) printf 'Expected 1 or 2 arguments: found %s\n' "${#}" >&2 && return 1 ;;
+esac

@@ -5,9 +5,9 @@
 ln_Tfi () {
     mkdir -p "$(dirname -- "${1}")" || return
     if [ -L "${1}" ]; then
-        ln -Tsrf "${2}" "${1}"
+        ln -Tsrf -- "${2}" "${1}"
     else
-        ln -Tsri "${2}" "${1}"
+        ln -Tsri -- "${2}" "${1}"
     fi
 }
 ln_fi () {
@@ -16,11 +16,19 @@ ln_fi () {
 
 cd "$(dirname -- "$(readlink -ne -- "${0}")")"
 
-# Link dotfiles needed for correct system operation.
-ln_Tfi "${HOME}/.zshenv" "$(pwd)/zshenv"
+# Link files needed for correct system operation.
+ln_Tfi "${HOME}/.profile" "$(pwd)/profile"
+ln_Tfi "${HOME}/.zshenv" "$(pwd)/profile"
 ln_Tfi "${HOME}/.zshrc" "$(pwd)/zshrc"
 ln_Tfi "${HOME}/.gitconfig" "$(pwd)/gitconfig"
 ln_Tfi "${HOME}/.gitignore" "$(pwd)/gitignore"
+ln_fi "${HOME}/.local/share" "$(pwd)/shrc"
+
+# Link personal scripts to make available in PATH.
+for file in "$(pwd)/scripts/"*; do
+    [ ! -e "${file}" ] && continue
+    ln_fi "${HOME}/.local/bin" "${file}"
+done
 
 # Link personal Kakoune colorschemes.
 for file in "$(pwd)/config/kak/colors/"*; do

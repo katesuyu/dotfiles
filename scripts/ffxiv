@@ -1,0 +1,2 @@
+#!/bin/sh
+"${HOME}/.local/bin/proton" run "${HOME}/.proton/pfx/drive_c/Program Files (x86)/SquareEnix/FINAL FANTASY XIV - A Realm Reborn/boot/ffxivboot64.exe" 2>/dev/null >/dev/null

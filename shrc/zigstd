@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+case "${#}" in
+    0) kak -e 'zig-std-prompt true' ;;
+    1) zigstd=$(
+            printf "try 'zig-std ''"
+            printf '%s' "${1}" | sed "s/'/''''/g"
+            printf "'';delete-buffer ''*scratch*''' catch 'quit 39'"
+        ) && kak -e "${zigstd}"
+        err=${?}
+        [ "${err}" -eq 39 ] && \
+            printf 'No such file or directory: %s\n' "${1}" >&2
+        exit "${err}" ;;
+    *) printf 'Expected 1 or 2 arguments: found %s\n' "${#}" >&2 exit 1 ;;
+esac

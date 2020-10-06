@@ -8,7 +8,7 @@ zig-std -docstring %{
         case "${#}" in
             0) printf "zig-std 'std.zig'\n" ;;
             1) cd "${HOME}/.local/zig/lib/zig/std" || exit 1
-               L=$(realpath "${1}" | head -c -1; printf '.') || exit 1
+               L=$({ realpath -e -- "${1}" || exit; } | head -c -1; printf '.') || exit 1
                printf "edit -existing '"
                printf "%s" "${L%?}" | sed "s/'/''/g"
                printf "'\n" ;;
@@ -27,14 +27,14 @@ define-command -hidden -params 0..1 zig-std-prompt %{
         set-register D %sh{realpath -s .}
         change-directory %sh{printf '%s' "${HOME}/.local/zig/lib/zig/std"}
         prompt -file-completion -on-abort %sh{
-            [[ "${1}" == 'true' ]] && \
+            [ "${1}" = 'true' ] && \
                 printf 'quit 0\n' && exit
             printf "change-directory '"
             printf '%s' "${kak_reg_d}" | sed "s/'/''/g"
             printf "'\n"
         } 'file:' %sh{
-            [[ "${1}" == 'true' ]] && \
-                printf '%s\n' "try 'zig-std %val{text}' catch 'zig-std-prompt true'" && exit
+            [ "${1}" = 'true' ] && \
+                printf '%s\n' "try 'zig-std %val{text};delete-buffer ''*scratch*''' catch 'zig-std-prompt true'" && exit
             printf "try 'change-directory ''"
             printf '%s' "${kak_reg_d}" | sed "s/'/''''/g"
             printf "'''\n%s\n" 'zig-std %val{text}'

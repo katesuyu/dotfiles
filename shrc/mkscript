@@ -1,0 +1,20 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+[ "${#}" -eq 1 ] && {
+    [ -e "${1}" ] && {
+        printf 'A file with the provided name already exists\n' >&2
+        exit 1
+    }
+    start_cmd=$(
+        printf 'set-option buffer filetype sh;'
+        printf "execute-keys '%s';" 'i#!/bin/sh<ret><esc>'
+        printf 'hook -once buffer BufWritePost .* %s' '%{
+            nop %sh{
+                chmod 700 -- "${kak_hook_param}"
+            }
+        }'
+    )
+    exec kak -e "${start_cmd}" -- "${1}"
+}
+printf 'Expected 1 argument, found %s\n' "${#}" >&2
+exit 1
