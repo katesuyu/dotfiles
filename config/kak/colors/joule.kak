@@ -2,7 +2,7 @@
 
 # This colorscheme is WIP: it highlights most things correctly, but due
 # to a few faces not being defined here, some faces fall back to default
-# terminal colors. This will be corrected as needed over tine.
+# terminal colors. This will be corrected as needed over time.
 evaluate-commands %sh{
     background='rgb:000000'
     foreground='rgb:eaeaea'
