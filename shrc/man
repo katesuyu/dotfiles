@@ -9,7 +9,7 @@ case "${#}" in
     1) kak -e "$(man "${1}")"
         err=${?}
         [ "${err}" -eq 39 ] && \
-            printf 'man: No entry for %s in the manual.\n' "${1}" >&2
+            printf 'No entry for %s in the manual.\n' "${1}" >&2
         return "${err}" ;;
     2) case "${2}" in
         [1-8])
