@@ -17,30 +17,89 @@ main () {
             'Linux'*) system=linux ;;
         esac
 
+    # Search this path for a config file in case the user does not realize
+    # we use the XDG / APPDATA / Application Support paths by default.
+    fallback_config_path="${HOME}/.config/kzdl/kzdl.json"
+    fallback_config_path2="${HOME}/.config/kzdl.json"
+
+    # Find the system-dependent location to place config files.
     if [ -n "${XDG_CONFIG_HOME+n}" ]; then
         # This is the most appropriate config location on Linux, and
         # it doesn't do any harm to check here on other OSes.
-        config_path="${XDG_CONFIG_HOME}/kzdl/kzdl.json"
-    elif [ -n "${LOCALAPPDATA+n}" ] && [ "${system-windows}" = 'windows' ]; then
+        default_config_path="${XDG_CONFIG_HOME}/kzdl/kzdl.json"
+        default_config_path2="${XDG_CONFIG_HOME}/kzdl.json"
+    elif [ -n "${APPDATA+n}" ] && [ "${system-windows}" = 'windows' ]; then
         # If we find this environment variable, and `uname` didn't tell us we
         # were on a different OS (env var could leak into WSL or something),
-        # use ${LOCALAPPDATA} to store configuration.
+        # use ${APPDATA} to store configuration.
         system=windows
-        config_path="${LOCALAPPDATA}/kzdl/kzdl.json"
+        default_config_path="${APPDATA}/kzdl/kzdl.json"
+        default_config_path2="${APPDATA}/kzdl.json"
     elif [ "${system}" = 'macos' ]; then
         # This is the recommended location for macOS config; a lot of macOS
         # users do not like their ${HOME} being cluttered with dotfiles.
-        config_path="${HOME}/Library/Application Support/kzdl/kzdl.json"
+        default_config_path="${HOME}/Library/Application Support/kzdl/kzdl.json"
+        default_config_path2="${HOME}/Library/Application Support/kzdl.json"
     else
         # Either we don't know the operating system, we don't know the canonical
         # location for config on the operating system, or it's Linux and the
         # user did not specify ${XDG_CONFIG_HOME}.
-        config_path="${HOME}/.config/kzdl/kzdl.json"
+        default_config_path=${fallback_config_path}
+        default_config_path2=${fallback_config_path2}
+        unset -v fallback_config_path
+        unset -v fallback_config_path2
     fi
 
-    # Retrieve config file if we're able to read it.
+    case "${0}" in
+        # We have been invoked as `zig`. Wrap the default compiler but allow
+        # the version to be overriden with the syntax `zig +[version] ...`
+        'zig' | *'/zig' | 'zig.sh' | *'/zig.sh')
+            wrap_zig "${@}" ;;
+    esac
+
+    # Extract options into variables while removing them from `${@}`.
+    parse_args "${@}" && eval "${eval_string}"
+
+    # Be a bit silly if --help is specified 3 or more times.
+    case "${opt_help}" in
+        '' | [1-2]) unset -v usage_header ;;
+        [3-6]) usage_header="Here is your usage info, as requested ${opt_help} times..." ;;
+        *) usage_header="Do you really need help? I'm sorry, I can't tell.
+It's not like you requested it ${opt_help} times or anything..." ;;
+    esac
+
+    # Handle --help, --version, and invoking `kzdl` with no subcommand.
+    [ -n "${opt_help+n}" ] && \
+        case "${subcommand}" in
+            '') main_usage && exit ;;
+            *) invalid todo "usage for subcommand ${subcommand}" ;;
+        esac
+    [ -n "${opt_version+n}" ] && printf '0.1.0\n' && exit
+    [ -z "${subcommand+n}" ] && invalid usage '[command] [options]'
+
+    # Check whether we can read the config file.
     unset -v config_err
-    { [ -f "${config_path}" ] && type jq >/dev/null && \
+    if [ -n "${opt_config_path+n}" ]; then
+        config_path=${opt_config_path}
+        [ -f "${config_path}" ]
+    else
+        config_path=${default_config_path}
+        [ -f "${config_path}" ] || {
+            [ -f "${default_config_path2}" ] && \
+            config_path=${default_config_path2}
+        } || {
+            [ -n "${fallback_config_path+n}" ] && \
+            [ -f "${fallback_config_path}" ] && \
+            config_path=${fallback_config_path}
+        } || {
+            [ -n "${fallback_config_path2+n}" ] && \
+            [ -f "${fallback_config_path2}" ] && \
+            config_path=${fallback_config_path2}
+        }
+    fi
+
+    # Retrieve config data if the above checks succeeded and we have `jq`.
+    { [ "${?}" -eq 0 ] && type jq >/dev/null && \
         config=$(export config_path; jq -c '
             if isempty(input?)|not then
                 "Config file has multiple root objects
@@ -51,72 +110,61 @@ main () {
             else . end
         ' -- "${config_path}")
     } || {
-        # `[ ... ]` and `type` return 1 on failure.
-        # jq returns 2, 3, or 5 on failure.
-        # We only want to set this variable if jq failed.
-        [ "${?}" -ge 2 ] config_err=${?}
+        # We only care about `jq` errors (2, 3, or 5).
+        # `[ ]` and `type` only return errors of 1.
+        case "${?}" in
+            [!1]) config_err=${?} ;;
+        esac
         unset -v config
     }
-
-    case "${0}" in
-        # We have been invoked as `zig`. Wrap the default compiler but allow
-        # the version to be overriden with the syntax `zig +[version] ...`
-        'zig' | *'/zig' | 'zig.sh' | *'/zig.sh')
-            wrap_zig "${@}" ;;
-    esac
-
-    # Invoke argument parsing, which uses `eval` to reorder positional arguments,
-    # set variables to appropriate values, and invoke the requested subcommand.
-    [ "${#}" -eq 0 ] && invalid usage '[command] [options]' >&2 && exit 1
-    parse_args && eval "${eval_string}"
 }
 
 # Print an 'invalid usage' error message, with the specific text dependent
-# on the provided parameters ${1} and ${2}
+# on the provided parameter ${1} (which can reference ${2} or ${3}).
 invalid () {
     case "${1}" in
-        'end-of-option' message="End-of-option mark '--' must follow a subcommand" ;;
+        'end-of-option') message="End-of-option mark '--' must follow a subcommand" ;;
         'usage') message="Usage: ${0} ${2}" ;;
-        'option') message="Unrecognized option: ${2}" ;;
-        'ill-formed') message="Ill-formed parameter: ${2}" ;;
-        'duplicate') message="Option specified twice: ${2}" ;;
+        'option') message="Bad option string: ${2}" ;;
         'subcommand') message="Unrecognized subcommand: ${2}" ;;
+        'argument-value') message="Option does not take argument: ${2}" ;;
         'missing-command') message="Expected a command after ${2}" ;;
-        'missing-value') message="Expected a value after ${2}" ;;
+        'missing-value') message="Expected a value after option: ${2}" ;;
+        'unknown-option') message="Unrecognized option: ${2}" ;;
         'unknown-alias') message="Unrecognized compiler alias: ${2}" ;;
         'unknown-version') message="Unrecognized compiler version: ${2}" ;;
         'dangling-alias') message="Alias does not correspond to an installed version: ${2}" ;;
         'custom') message="${2}" ;;
-        *) message="Internal error: ${1}: ${2}"
+        *) message="Internal error: ${1}: ${2}" ;;
     esac
     printf '%s\nSee `%s --help` for detailed usage information\n' "${message}" "${0}" >&2
     exit 1
 }
 
 # Usage text describing the available subcommands and options.
-usage () { printf 'kzdl v0.1.0 - configurable Zig version multiplexer
+main_usage () { usage_header=${usage_header-'kzdl v0.1.0 - configurable Zig version multiplexer'}
+printf '%s\n
+Usage: %s [command] [options]\n\nCommands:%s' "${usage_header}" "${0}" '
+  install
+    install the specified Zig version
 
-Usage: %s [command] [options]\n\nCommands:%s' "${0}" '
+  update
+    update Zig installation based on preferences
+
+  remove
+    remove specified Zig version(s)
+
   clean
     clean unused Zig versions based on configured cleaning policy
 
   config
     update kzdl configuration from the command line
 
-  install
-    install the specified Zig version
-
   query
     list installed Zig versions and check for updates
 
-  remove
-    remove specified Zig version(s)
-
   run
     invoke Zig compiler specified by a version or alias identifier
-
-  update
-    update Zig installation based on preferences
 
 Options:
 '"${basic_options}"'
@@ -138,14 +186,24 @@ basic_options='
 
   --force, -f
     do not ask for confirmation before modifying files on disk
+
+  --config-file=[file]
+    override the file from which configuration is loaded
+
+  -- (end-of-options mark)
+    suppress option parsing for further arguments
 '
 basic_options=${basic_options#?}
 basic_options=${basic_options%?}
 
-# Parse arguments and output a string to be evaluated by the shell to reorder
-# arguments and variables as necessary and then run the requested subcommand.
+# Fully parse the arguments, correctly categorizing options, option payloads,
+# and subcommands. Sets `eval_string` to a correctly quoted `set --` command
+# that removes all arguments except for non-option positional parameters.
 parse_args () {
-    index=1
+    eval_string='set --'
+    true_index=1 # `${N}` to use in `eval_string`.
+    logical_index=1 # `${N}` which is valid post-eval.
+    shift_amount=1 # Amount to shift per iteration.
     unset -v end_of_option
     unset -v subcommand
     unset -v opt_help
@@ -153,47 +211,100 @@ parse_args () {
     unset -v opt_verbose
     unset -v opt_interactive
     unset -v opt_force
-    unset -v positional
-    unset -v eval_string
+    unset -v opt_config_path
     while [ "${#}" -gt 0 ]; do
-        if [ "${end_of_option}" = 1 ]; then
-            positional=${positional}${positional+ }${index}
+        if [ -n "${end_of_option+n}" ]; then
+            # Add the index of this non-option positional parameter.
+            eval_string="${eval_string}"' "${'"${true_index}"'}"'
         else
             case "${1}" in
-                '--') [ -z "${end_of_option+n}" ] && invalid end-of-option
+                '--') [ -z "${subcommand+n}" ] && invalid end-of-option
                     end_of_option=1 ;;
-                '---'*) invalid ill-formed "${1}" ;;
+                '---'*) invalid option "${1}" ;;
                 '--'*) parse_long_option "${@}" ;;
-                '-'*) parse_short_option "${@}" ;;
+                '-'?*) parse_short_option "${@}" ;;
                 *) if [ -z "${subcommand+n}" ]; then
+                    # We do NOT keep this as a positional parameter as there
+                    # is no point: it's already in ${subcommand}.
                     verify_subcommand "${1}"
                 else
-                    positional=${positional}${positional+ }${index}
+                    # Add the index of this non-option positional parameter.
+                    eval_string="${eval_string}"' "${'"${true_index}"'}"'
+                    # Maintain a correct index for options that reference positions.
+                    logical_index=$((logical_index + 1))
                 fi ;;
             esac
         fi
-        shift
-        index=$((index + 1))
+        shift "${shift_amount}"
+        true_index=$((${true_index} + ${shift_amount}))
+        shift_amount=1 # Shift amounts != 1 only apply for a single iteration.
     done
-    # Now that we have all the options in variables, this removes all options
-    # and option payloads from ${@}, giving subcommands the freedom to access
-    # positional arguments directly.
-    eval_string=$(
-        printf 'set --'
-        for i in ${positional}; do
-            printf ' "${%s}"' "${i}"
-        done
-    )
 }
 
 # Parse short option clusters and their payloads.
 parse_short_option () {
-    true
+    cluster=${1#?}
+    case "${cluster}" in
+        *[!a-zA-Z0-9]*) invalid option "${1}" ;;
+    esac
+    while [ "${#cluster}" -gt 0 ]; do
+        case "${cluster}" in
+            h*) opt_help=$((${opt_help-0} + 1)) ;;
+            V*) opt_version=1 ;;
+            v*) opt_verbose=$((${opt_verbose-0} + 1)) ;;
+            i*) opt_interactive=1
+                unset -v opt_force ;;
+            f*) opt_force=1
+                unset -v opt_interactive ;;
+            *) keep_first 1 "${cluster}"
+                invalid unknown-option "-${trimmed}" ;;
+        esac
+        cluster=${cluster#?}
+    done
 }
 
-# Parse long options and their payloads.
+# Parse long options and their payloads. Handles two possible forms:
+# -----------------
+#  ${1}: key=value
+# -----------------
+#  ${1}: key
+#  ${2}: value
+# -----------------
+# Sets `shift_amount` as appropriate for the specific option form.
 parse_long_option () {
-    true
+    # Parse both "conjoined" key=value and separate ${key} ${value}. Track
+    # information required to emit missing value errors.
+    case "${1}" in
+        *'='*) long_opt_conjoined=1
+            long_opt_key=${1%%'='*}
+            long_opt_key=${long_opt_key#'--'}
+            long_opt_value=${1#*'='} ;;
+        *) unset -v long_opt_conjoined
+            long_opt_key=${1#'--'}
+            long_opt_value=${2} ;;
+    esac
+    case "${long_opt_key}" in
+        'help' | 'version' | 'verbose' | \
+        'interactive' | 'force')
+            [ -n "${long_opt_conjoined+n}" ] && invalid argument-value "${1}" ;;
+        'config-file')
+            [ -z "${long_opt_conjoined+n}" ] && {
+                [ -z "${2+n}" ] && invalid missing-value "${1}"
+                shift_amount=2
+            } ;;
+        *[!a-zA-Z0-9_-]*) invalid option "${1}" ;;
+        *) invalid unknown-option "--${long_opt_key}" ;;
+    esac
+    case "${long_opt_key}" in
+        'help') opt_help=$((${opt_help-0} + 1)) ;;
+        'version') opt_version=1 ;;
+        'verbose') opt_verbose=$((${opt_verbose-0} + 1)) ;;
+        'interactive') opt_interactive=1
+            unset -v opt_force ;;
+        'force') opt_force=1
+            unset -v opt_interactive ;;
+        'config-file') opt_config_path=${long_opt_value} ;;
+    esac
 }
 
 # Check if the subcommand ${1} exists and exit if not.
@@ -201,14 +312,8 @@ verify_subcommand () {
     case "${1}" in
         'clean' | 'config' | 'install' | \
         'query' | 'run' | 'remove' | 'update') subcommand=${1} ;;
-        'version') invalid subcommand "${1}"'
-Use `'"${0}"' --version` to query current version' ;;
         *) invalid subcommand "${1}" ;;
     esac
-    [ -n "${config_err+n}" ] && [ "${1}" != 'config' ] && {
-        invalid custom 'Cannot run subcommands other than `config` with config errors
-        Run `'"${1}"' config reset` or fix the errors in '"${config_path}"
-    }
 }
 
 # Keep the first ${1} characters from ${2}.
@@ -259,123 +364,6 @@ remove_first () {
         set -- "$((${1} - 1))" "${2#?}"
     done
     trimmed=${2}
-}
-
-# ${1..} = commands required to perform the requested task
-# To succeed, all commands must be executable in the current environment.
-# On failure, print an error message and exit.
-require () {
-    while [ "${#}" -gt 0 ]; do
-        type "${1}" >/dev/null && shift && continue
-        printf 'Command not found: %s\n' "${1}" >&2
-        exit 1
-    done
-}
-
-# Append a filler character to avoid newline trimming upon command substitution.
-safesub () {
-    "${@}" || return
-    printf '.'
-}
-
-# Retrieve the requested value from config JSON, returning a default if the
-# value was not present in the config JSON.
-get_config () {
-    true
-}
-
-# ${1} = version or alias identifier
-# On success, set the `version` variable to the canonical version corresponding
-# to the provided parameter. On failure, print an error message and exit.
-read_alias () {
-    true
-}
-
-# ${1} = Zig version / alias identifier to execute
-# If the version / alias identifier resolves to an existing Zig installation,
-# forward ${2..} to the Zig compiler. Otherwise, exit with an error message.
-
-# If the first parameter is in the form `+[version|alias]`, the version/alias
-# string will be used to select the Zig compiler. All remaining parameters,
-# aside from the aforementioned special case, are forwarded directly to Zig.
-wrap_zig () {
-    case "${1}" in
-        '+'*) version=${1#?} && shift && run "${version}" "${@}" ;;
-        *) run default "${@}" ;;
-    esac
-}
-
-# Remove unused Zig versions from subscribed channels, excluding specific versions
-# that may have been pinned. The precise cleaning policy is user-configurable.
-clean () {
-    printf 'Not yet implemented\n' >&2 && exit 1
-}
-
-# Configure the default version of Zig. This is a convenience shortcut equivalent
-# to using `kzdl pin` to assign the `default` alias to a version or channel.
-default () {
-    printf 'Not yet implemented\n' >&2 && exit 1
-}
-
-# Install Zig toolchains and subscribe to updates for stable/nightly.
-install () {
-    usage () { printf 'Usage: %s install [options] [channel]\n\nChannels:\n%s\n\nOptions:%s' "${0}" "$(
-        set -f
-        IFS=:
-        for channel in ${channels}; do
-            printf '  %s\n' "${channel}"
-        done
-    )" '
-  --once         retrieve a single version from the channel without subscribing to it
-  --pin [name]   pin the target with the provided string as an alias
-  --pin-date     pin the target with its build date as an alias
-  --pin-version  pin the target with its version as an alias
-  --temp [name]  assign the target an alias but do not pin it
-  --version      the channel parameter instead takes a version number
-';  }
-    [ "${#}" -eq 0 ] && usage >&2 && exit 1
-    [ "${1}" = '--help' ] && usage && exit
-    exit
-}
-
-# Create aliases to a specific version or channel of Zig, and pin versions to
-# protect them from `kzdl clean` or `kzdl update` (depending on configuration).
-pin () {
-    printf 'Not yet implemented\n' >&2 && exit 1
-}
-
-# Query if the provided channel (or any subscribed channels, if no argument is
-# provided) has an update available, returning the version if so.
-query () {
-    printf 'Not yet implemented\n' >&2 && exit 1
-}
-
-# Remove the specified Zig version. If the target is a channel, removes the
-# implicit pin on the configured amount of versions, and by default also
-# removes those installations if no pins remain.
-remove () {
-    printf 'Not yet implemented\n' >&2 && exit 1
-}
-
-# Forward arguments to the Zig compiler identified by the provided alias.
-run () {
-    [ "${#}" -eq 0 ] && {
-        printf 'Usage: %s run [alias] [args...]\n' "${0}" >&2
-        exit 1
-    }
-    read_alias "${1}"
-    [ -x "${folder}/zig" ] && {
-        shift
-        "${folder}/zig" "${@}"
-        exit
-    }
-    invalid dangling-alias "${1}"
-}
-
-# Update the specified channel, or all subscribed channels if no argument is provided.
-# If configured to do so, may automatically trigger a clean once updated.
-update () {
-    printf 'Not yet implemented\n' >&2 && exit 1
 }
 
 main "${@}"
