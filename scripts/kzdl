@@ -1,26 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
+
+# Determine system, load config file into memory, and parse options and parameters.
 main () {
-    # The JSON file where Zig tarballs are listed.
-    download_index='https://ziglang.org/download/index.json'
-    [ -n "${KZDL_INDEX}" ] && download_index="${KZDL_INDEX}"
-
-    # The printf format string for the downloaded tarball.
-    download_fmt='https://ziglang.org/builds/zig-%s-%s-%s.%s'
-    [ -n "${KZDL_MIRROR_FMT}" ] && download_fmt="${KZDL_MIRROR_FMT}"
-
-    # The printf format for versioned folder names.
-    folder_fmt='zig-%s'
-    [ -n "${KZDL_FOLDER_FMT}" ] && folder_fmt="${KZDL_FOLDER_FMT}"
-
-    # The channels that can be found in the download index.
-    channels='stable:nightly'
-    [ -n "${KZDL_CHANNELS}" ] && channels="${KZDL_CHANNELS}"
-
-    # The current operating system for cache and download purposes.
-    system=unknown
-    [ -n "${KZDL_SYSTEM}" ] && system=${KZDL_SYSTEM}
-    [ -z "${KZDL_SYSTEM}" ] && type uname >/dev/null && \
+    # Find the current system if `uname` is available.
+    unset -v system
+    type uname >/dev/null && \
         case "$(uname)" in
             'Windows'* | 'MSYS'* | 'MINGW'* | 'CYGWIN'*) system=windows ;;
             'Darwin'*) system=macos ;;
@@ -31,70 +16,249 @@ main () {
             'SunOS'*) system=solaris ;;
             'Linux'*) system=linux ;;
         esac
-    [ "${system}" = 'windows' ] && zig='zig.exe'
-    [ "${system}" = 'windows' ] || zig='zig'
 
-    # The current architecture for download purposes.
-    arch=unknown
-    [ -n "${KZDL_ARCH}" ] && arch=${KZDL_ARCH}
-    [ -z "${KZDL_ARCH}" ] && type uname >/dev/null && \
-        case "$(uname -m)" in
-            'x86_64' | 'amd64') arch=x86_64 ;;
-            'x86' | 'i386' | 'i686' | 'i86pc') arch=i386 ;;
-            'aarch64') arch=aarch64 ;;
-            'armv6'*) arch=armv6kz ;;
-            'armv7'*) arch=armv7a ;;
-            'riscv64') arch=riscv64 ;;
-            'sparc64' | 'sparcv9') arch=sparcv9 ;;
-            'sun4u' | 'sparc') arch=sparc ;;
-        esac
-
-    # Attempt to locate a good place to store files.
-    if [ -n "${KZDL_ROOT}" ]; then
-        root_path=${KZDL_ROOT}
-    elif [ -n "${XDG_DATA_HOME}" ]; then
-        root_path=${XDG_DATA_HOME}/kzdl
+    if [ -n "${XDG_CONFIG_HOME+n}" ]; then
+        # This is the most appropriate config location on Linux, and
+        # it doesn't do any harm to check here on other OSes.
+        config_path="${XDG_CONFIG_HOME}/kzdl/kzdl.json"
+    elif [ -n "${LOCALAPPDATA+n}" ] && [ "${system-windows}" = 'windows' ]; then
+        # If we find this environment variable, and `uname` didn't tell us we
+        # were on a different OS (env var could leak into WSL or something),
+        # use ${LOCALAPPDATA} to store configuration.
+        system=windows
+        config_path="${LOCALAPPDATA}/kzdl/kzdl.json"
+    elif [ "${system}" = 'macos' ]; then
+        # This is the recommended location for macOS config; a lot of macOS
+        # users do not like their ${HOME} being cluttered with dotfiles.
+        config_path="${HOME}/Library/Application Support/kzdl/kzdl.json"
     else
-        case "${system}" in
-            'macos') root_path=${HOME}/Library/'Application Support'/kzdl ;;
-            'windows') root_path=${LOCALAPPDATA}/kzdl ;;
-            *) root_path=${HOME}/.local/share/kzdl ;;
-        esac
+        # Either we don't know the operating system, we don't know the canonical
+        # location for config on the operating system, or it's Linux and the
+        # user did not specify ${XDG_CONFIG_HOME}.
+        config_path="${HOME}/.config/kzdl/kzdl.json"
     fi
 
+    # Retrieve config file if we're able to read it.
+    unset -v config_err
+    { [ -f "${config_path}" ] && type jq >/dev/null && \
+        config=$(export config_path; jq -c '
+            if isempty(input?)|not then
+                "Config file has multiple root objects
+                Check \($ENV.config_path)\n"|halt_error
+            elif type != "object"
+                "Config file has non-object root value: \(type)
+                Check \($ENV.config_path)\n"|halt_error
+            else . end
+        ' -- "${config_path}")
+    } || {
+        # `[ ... ]` and `type` return 1 on failure.
+        # jq returns 2, 3, or 5 on failure.
+        # We only want to set this variable if jq failed.
+        [ "${?}" -ge 2 ] config_err=${?}
+        unset -v config
+    }
+
     case "${0}" in
-        # We are symlinked to Zig. This allows us to choose a Zig installation
-        # based on environment configuration.
-        'zig' | *'/zig') wrap_zig "${@}" ;;
+        # We have been invoked as `zig`. Wrap the default compiler but allow
+        # the version to be overriden with the syntax `zig +[version] ...`
+        'zig' | *'/zig' | 'zig.sh' | *'/zig.sh')
+            wrap_zig "${@}" ;;
     esac
-    [ "${#}" -eq 0 ] && usage >&2 && exit 1
-    [ "${1}" = '--help' ] && usage && exit
-    case "${1}" in
-        '--') invalid -- ;;
-        '-'*) invalid option "${1}" ;;
-        'run') shift && run_zig "${@}" ;;
-        'install') shift && install "${@}" ;;
-        *) invalid command "${1}" ;;
-    esac
+
+    # Invoke argument parsing, which uses `eval` to reorder positional arguments,
+    # set variables to appropriate values, and invoke the requested subcommand.
+    [ "${#}" -eq 0 ] && invalid usage '[command] [options]' >&2 && exit 1
+    parse_args && eval "${eval_string}"
 }
 
 # Print an 'invalid usage' error message, with the specific text dependent
 # on the provided parameters ${1} and ${2}
 invalid () {
     case "${1}" in
-        '--') message="Unexpected end-of-parameter mark: --" ;;
+        'end-of-option' message="End-of-option mark '--' must follow a subcommand" ;;
+        'usage') message="Usage: ${0} ${2}" ;;
         'option') message="Unrecognized option: ${2}" ;;
+        'ill-formed') message="Ill-formed parameter: ${2}" ;;
         'duplicate') message="Option specified twice: ${2}" ;;
-        'command') message="Unrecognized command: ${2}" ;;
+        'subcommand') message="Unrecognized subcommand: ${2}" ;;
         'missing-command') message="Expected a command after ${2}" ;;
         'missing-value') message="Expected a value after ${2}" ;;
         'unknown-alias') message="Unrecognized compiler alias: ${2}" ;;
         'unknown-version') message="Unrecognized compiler version: ${2}" ;;
         'dangling-alias') message="Alias does not correspond to an installed version: ${2}" ;;
         'custom') message="${2}" ;;
+        *) message="Internal error: ${1}: ${2}"
     esac
     printf '%s\nSee `%s --help` for detailed usage information\n' "${message}" "${0}" >&2
     exit 1
+}
+
+# Usage text describing the available subcommands and options.
+usage () { printf 'kzdl v0.1.0 - configurable Zig version multiplexer
+
+Usage: %s [command] [options]\n\nCommands:%s' "${0}" '
+  clean
+    clean unused Zig versions based on configured cleaning policy
+
+  config
+    update kzdl configuration from the command line
+
+  install
+    install the specified Zig version
+
+  query
+    list installed Zig versions and check for updates
+
+  remove
+    remove specified Zig version(s)
+
+  run
+    invoke Zig compiler specified by a version or alias identifier
+
+  update
+    update Zig installation based on preferences
+
+Options:
+'"${basic_options}"'
+'; }
+
+# Basic set of options available for every subcommand.
+basic_options='
+  --help, -h
+    print this usage info or that of a subcommand
+
+  --version, -V
+    print the current version of kzdl and exit
+
+  --verbose, -v
+    print more verbose output when performing tasks
+
+  --interactive, -i
+    ask for confirmation before modifying files on disk
+
+  --force, -f
+    do not ask for confirmation before modifying files on disk
+'
+basic_options=${basic_options#?}
+basic_options=${basic_options%?}
+
+# Parse arguments and output a string to be evaluated by the shell to reorder
+# arguments and variables as necessary and then run the requested subcommand.
+parse_args () {
+    index=1
+    unset -v end_of_option
+    unset -v subcommand
+    unset -v opt_help
+    unset -v opt_version
+    unset -v opt_verbose
+    unset -v opt_interactive
+    unset -v opt_force
+    unset -v positional
+    unset -v eval_string
+    while [ "${#}" -gt 0 ]; do
+        if [ "${end_of_option}" = 1 ]; then
+            positional=${positional}${positional+ }${index}
+        else
+            case "${1}" in
+                '--') [ -z "${end_of_option+n}" ] && invalid end-of-option
+                    end_of_option=1 ;;
+                '---'*) invalid ill-formed "${1}" ;;
+                '--'*) parse_long_option "${@}" ;;
+                '-'*) parse_short_option "${@}" ;;
+                *) if [ -z "${subcommand+n}" ]; then
+                    verify_subcommand "${1}"
+                else
+                    positional=${positional}${positional+ }${index}
+                fi ;;
+            esac
+        fi
+        shift
+        index=$((index + 1))
+    done
+    # Now that we have all the options in variables, this removes all options
+    # and option payloads from ${@}, giving subcommands the freedom to access
+    # positional arguments directly.
+    eval_string=$(
+        printf 'set --'
+        for i in ${positional}; do
+            printf ' "${%s}"' "${i}"
+        done
+    )
+}
+
+# Parse short option clusters and their payloads.
+parse_short_option () {
+    true
+}
+
+# Parse long options and their payloads.
+parse_long_option () {
+    true
+}
+
+# Check if the subcommand ${1} exists and exit if not.
+verify_subcommand () {
+    case "${1}" in
+        'clean' | 'config' | 'install' | \
+        'query' | 'run' | 'remove' | 'update') subcommand=${1} ;;
+        'version') invalid subcommand "${1}"'
+Use `'"${0}"' --version` to query current version' ;;
+        *) invalid subcommand "${1}" ;;
+    esac
+    [ -n "${config_err+n}" ] && [ "${1}" != 'config' ] && {
+        invalid custom 'Cannot run subcommands other than `config` with config errors
+        Run `'"${1}"' config reset` or fix the errors in '"${config_path}"
+    }
+}
+
+# Keep the first ${1} characters from ${2}.
+# Result is available in ${trimmed}.
+keep_first () {
+    [ "${1}" -ge "${#2}" ] && {
+        trimmed=${2}
+        return
+    }
+    remove_last "$((${#2} - ${1}))" "${2}"
+}
+
+# Keep the final ${1} characters from ${2}.
+# Result is available in ${trimmed}.
+keep_last () {
+    [ "${1}" -ge "${#2}" ] && {
+        trimmed=${2}
+        return
+    }
+    remove_first "$((${#2} - ${1}))" "${2}"
+}
+
+# Remove the final ${1} characters from the end of ${2}.
+# Result is available in ${trimmed}.
+remove_last () {
+    while [ "${1}" -ge 16 ]; do
+        set -- "$((${1} - 16))" "${2%????????????????}"
+    done
+    while [ "${1}" -ge 4 ]; do
+        set -- "$((${1} - 4))" "${2%????}"
+    done
+    while [ "${1}" -gt 0 ]; do
+        set -- "$((${1} - 1))" "${2%?}"
+    done
+    trimmed=${2}
+}
+
+# Remove the first ${1} characters from the end of ${2}.
+# Result is available in ${trimmed}.
+remove_first () {
+    while [ "${1}" -ge 16 ]; do
+        set -- "$((${1} - 16))" "${2#????????????????}"
+    done
+    while [ "${1}" -ge 4 ]; do
+        set -- "$((${1} - 4))" "${2#????}"
+    done
+    while [ "${1}" -gt 0 ]; do
+        set -- "$((${1} - 1))" "${2#?}"
+    done
+    trimmed=${2}
 }
 
 # ${1..} = commands required to perform the requested task
@@ -103,8 +267,21 @@ invalid () {
 require () {
     while [ "${#}" -gt 0 ]; do
         type "${1}" >/dev/null && shift && continue
-        printf 'Command not found: %s\n' "${1}" >&2 && exit 1
+        printf 'Command not found: %s\n' "${1}" >&2
+        exit 1
     done
+}
+
+# Append a filler character to avoid newline trimming upon command substitution.
+safesub () {
+    "${@}" || return
+    printf '.'
+}
+
+# Retrieve the requested value from config JSON, returning a default if the
+# value was not present in the config JSON.
+get_config () {
+    true
 }
 
 # ${1} = version or alias identifier
@@ -127,18 +304,6 @@ wrap_zig () {
         *) run default "${@}" ;;
     esac
 }
-
-# Usage text for the various available subcommands.
-usage () { printf 'Usage: %s [command] [params]\n\nCommands:%s' "${0}" '
-  clean     clean unused Zig versions based on configured cleaning policy
-  default   configure the default Zig version
-  install   install a specific Zig version
-  pin       create aliases and protect Zig versions from deletion
-  query     list installed Zig versions and check for updates
-  remove    remove specified Zig version(s)
-  run       invoke Zig compiler specified by a version or alias identifier
-  update    update Zig installation based on preferences
-'; }
 
 # Remove unused Zig versions from subscribed channels, excluding specific versions
 # that may have been pinned. The precise cleaning policy is user-configurable.

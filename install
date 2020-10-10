@@ -3,7 +3,7 @@
 
 # Run `ln -f` if the destination is a symlink, or `ln -i` otherwise.
 ln_Tfi () {
-    mkdir -p "$(dirname -- "${1}")" || return
+    mkdir -p -- "$(dirname -- "${1}")" || return
     if [ -L "${1}" ]; then
         ln -Tsrf -- "${2}" "${1}"
     else
