@@ -72,6 +72,7 @@ It's not like you requested it ${opt_help} times or anything..." ;;
     [ -n "${opt_help+n}" ] && \
         case "${subcommand}" in
             '') main_usage && exit ;;
+            'install') install_usage && exit ;;
             *) invalid todo "usage for subcommand ${subcommand}" ;;
         esac
     [ -n "${opt_version+n}" ] && printf '0.1.0\n' && exit
@@ -142,17 +143,18 @@ invalid () {
 }
 
 # Usage text describing the available subcommands and options.
-main_usage () { usage_header=${usage_header-'kzdl v0.1.0 - configurable Zig version multiplexer'}
+main_usage () {
+usage_header=${usage_header-'kzdl v0.1.0 - configurable Zig version multiplexer'}
 printf '%s\n
 Usage: %s [command] [options]\n\nCommands:%s' "${usage_header}" "${0}" '
   install
-    install the specified Zig version
+    install the specified versions of Zig
 
   update
-    update Zig installation based on preferences
+    update Zig installations based on preferences
 
   remove
-    remove specified Zig version(s)
+    remove specified Zig versions
 
   clean
     clean unused Zig versions based on configured cleaning policy
@@ -166,12 +168,51 @@ Usage: %s [command] [options]\n\nCommands:%s' "${usage_header}" "${0}" '
   run
     invoke Zig compiler specified by a version or alias identifier
 
-Options:
-'"${basic_options}"'
+General Options:
+'"${general_options}"'
+'; }
+
+install_usage () {
+usage_header=${usage_header-'kzdl install - install the specified versions of Zig'}
+printf '%s\n
+Usage: %s install [options] [versions...]\n\nVersions:%s' "${usage_header}" "${0}" '
+  master
+    the latest CI build available from ziglang.org
+
+  stable
+    the latest official version as listed on ziglang.org
+
+  [X.Y.Z] (0.6.0)
+    a specific version provided in semver notation
+
+  [X.Y.Z+hash] (0.6.0+bd449b184)
+    a specific post-X.Y.Z development version, identified by commit hash
+
+Install Options:
+  --alias=[name], -a [name]
+    configure an alias for the installed Zig version
+
+  --date-alias
+    use the installed Zig version'\''s build date as an alias
+
+  --store-root=[dir], -R [dir]
+    override the folder in which all Zig versions are installed
+
+  --output-dir=[dir]
+    override the folder in which a specific Zig version is unpacked
+
+  --os=[name]
+    the operating system upon which the downloaded versions should run
+
+  --arch=[name]
+    the CPU architecture upon which the downloaded versions should run
+
+General Options:
+'"${general_options}"'
 '; }
 
 # Basic set of options available for every subcommand.
-basic_options='
+general_options='
   --help, -h
     print this usage info or that of a subcommand
 
@@ -193,8 +234,8 @@ basic_options='
   -- (end-of-options mark)
     suppress option parsing for further arguments
 '
-basic_options=${basic_options#?}
-basic_options=${basic_options%?}
+general_options=${general_options#?}
+general_options=${general_options%?}
 
 # Fully parse the arguments, correctly categorizing options, option payloads,
 # and subcommands. Sets `eval_string` to a correctly quoted `set --` command
@@ -224,9 +265,11 @@ parse_args () {
                 '--'*) parse_long_option "${@}" ;;
                 '-'?*) parse_short_option "${@}" ;;
                 *) if [ -z "${subcommand+n}" ]; then
-                    # We do NOT keep this as a positional parameter as there
-                    # is no point: it's already in ${subcommand}.
-                    verify_subcommand "${1}"
+                    case "${1}" in
+                        'clean' | 'config' | 'install' | \
+                        'query' | 'run' | 'remove' | 'update') subcommand=${1} ;;
+                        *) invalid subcommand "${1}" ;;
+                    esac
                 else
                     # Add the index of this non-option positional parameter.
                     eval_string="${eval_string}"' "${'"${true_index}"'}"'
@@ -241,7 +284,8 @@ parse_args () {
     done
 }
 
-# Parse short option clusters and their payloads.
+# Parse short option clusters and their values. Sets `shift_amount` to
+# a higher value as appropriate for any values the option may have taken.
 parse_short_option () {
     cluster=${1#?}
     case "${cluster}" in
@@ -263,14 +307,9 @@ parse_short_option () {
     done
 }
 
-# Parse long options and their payloads. Handles two possible forms:
-# -----------------
-#  ${1}: key=value
-# -----------------
-#  ${1}: key
-#  ${2}: value
-# -----------------
-# Sets `shift_amount` as appropriate for the specific option form.
+# Parse long options and their values, handling both `key=value` and
+# `key` `value` forms as appropriate. Sets `shift_amount` to a higher
+# value as appropriate for any values the option may have taken.
 parse_long_option () {
     # Parse both "conjoined" key=value and separate ${key} ${value}. Track
     # information required to emit missing value errors.
@@ -304,15 +343,6 @@ parse_long_option () {
         'force') opt_force=1
             unset -v opt_interactive ;;
         'config-file') opt_config_path=${long_opt_value} ;;
-    esac
-}
-
-# Check if the subcommand ${1} exists and exit if not.
-verify_subcommand () {
-    case "${1}" in
-        'clean' | 'config' | 'install' | \
-        'query' | 'run' | 'remove' | 'update') subcommand=${1} ;;
-        *) invalid subcommand "${1}" ;;
     esac
 }
 

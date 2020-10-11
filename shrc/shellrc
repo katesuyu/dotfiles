@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
 alias ls='ls --color=auto'
-alias mkscript="${SHRC}/mkscript"
-alias man="${SHRC}/man"
-alias zigstd="${SHRC}/zigstd"
+alias mkscript='"${SHRC}/mkscript"'
+alias man='"${SHRC}/man"'
+alias zigstd='"${SHRC}/zigstd"'
