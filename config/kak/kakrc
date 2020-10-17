@@ -9,13 +9,14 @@ nop %sh{
 source "%val{config}/plugins/plug.kak/rc/plug.kak"
 plug "robertmeta/plug.kak" noload
 
-# My personal Kakoune colorscheme.
-colorscheme joule
+plug "katesuyu/joule.kak" theme config %{
+    colorscheme joule
+}
 
 plug "ul/kak-lsp" do %{
     cargo install --locked --force --path .
 } config %{
-    # Reload colorscheme because kak-lsp sets its own faces without permission.
+    # Re-activate my chosen colorscheme because kak-lsp overrides with its own face.
     colorscheme joule
 
     # Generate config files for kak-lsp and ZLS to avoid hardcoding ${HOME}.

@@ -30,12 +30,6 @@ for file in "$(pwd)/scripts/"*; do
     ln_fi "${HOME}/.local/bin" "${file}"
 done
 
-# Link personal Kakoune colorschemes.
-for file in "$(pwd)/config/kak/colors/"*; do
-    [ ! -e "${file}" ] && continue
-    ln_fi "${HOME}/.config/kak/colors" "${file}"
-done
-
 # Link kakrc and its sub-files.
 ln_fi "${HOME}/.config/kak" "$(pwd)/config/kak/kakrc"
 ln_fi "${HOME}/.config/kak" "$(pwd)/config/kak/rc"
