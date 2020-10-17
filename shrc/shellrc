@@ -4,3 +4,7 @@ alias ls='ls --color=auto'
 alias mkscript='"${SHRC}/mkscript"'
 alias man='"${SHRC}/man"'
 alias zigstd='"${SHRC}/zigstd"'
+
+killfirefox () (
+    kill -9 "$(ps --no-header -o pid -C firefox | head -n 1 | sed 's/^ \+//')"
+)

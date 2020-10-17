@@ -15,7 +15,7 @@ colorscheme joule
 plug "ul/kak-lsp" do %{
     cargo install --locked --force --path .
 } config %{
-    # Load colorscheme here too since kak-lsp overrides faces.
+    # Reload colorscheme because kak-lsp sets its own faces without permission.
     colorscheme joule
 
     # Generate config files for kak-lsp and ZLS to avoid hardcoding ${HOME}.
@@ -32,9 +32,9 @@ plug "ul/kak-lsp" do %{
             sedstr="${sedstr}"'struct = "type"\n'
             sedstr="${sedstr}"'union = "type"\n'
             sedstr="${sedstr}"'enum = "type"\n'
-            sedstr="${sedstr}"'tagField = "field"\n'
-            sedstr="${sedstr}"'errorTag = "field"\n'
-            sedstr="${sedstr}"'field = "field"\n'
+            sedstr="${sedstr}"'tagField = "function"\n'
+            sedstr="${sedstr}"'errorTag = "function"\n'
+            sedstr="${sedstr}"'field = "function"\n'
             sedstr="${sedstr}"'parameter = "variable"/'
             sed "${sedstr}" <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
 
@@ -162,8 +162,8 @@ hook global WinSetOption filetype=(sh|kak) %{
 }
 
 # Enable line numbers and soft-wrapping.
-add-highlighter global/ number-lines
-add-highlighter global/ wrap -word
+add-highlighter global/ number-lines -hlcursor
+add-highlighter global/ wrap -word -indent
 
 # Disable assistant for cleaner interface. Nothing personal.
 set-option -add global ui_options ncurses_assistant=none
