@@ -97,6 +97,34 @@ plug "ul/kak-lsp" do %{
 # Keybind to comment/uncomment selected lines.
 map -docstring 'comment out selected lines' global normal '#' ': comment-line<ret>'
 
+# User mappings to copy/paste with xclip.
+map -docstring 'copy selection to X clipboard' global user 'y' \
+    %[: xclip-copy-internal<ret>]
+map -docstring 'delete selection and copy to X clipboard' global user 'd' \
+    %[: xclip-copy-internal<ret><a-d>]
+map -docstring 'paste from X clipboard (append)' global user 'p' \
+    %[: xclip-paste-internal p<ret>]
+map -docstring 'paste from X clipboard (prepend)' global user 'P' \
+    %[: xclip-paste-internal P<ret>]
+map -docstring 'paste from X clipboard (replace)' global user 'R' \
+    %[: xclip-paste-internal R<ret>]
+
+define-command -hidden xclip-copy-internal \
+    %{execute-keys %[<a-|>xclip -selection clipboard <ret>]}
+
+define-command -hidden xclip-paste-internal -params 1 %{
+    evaluate-commands -save-regs \" %{
+        edit -scratch
+        set-register \"
+        try %{
+            execute-keys -draft -save-regs /| \
+            %[!xclip -o -selection clipboard<ret>gg/..<ret>%Hy]
+        }
+        delete-buffer
+        execute-keys "%val{count}%arg{1}"
+    }
+}
+
 # Handles soft tabbing better than the naive approach.
 plug "andreyorst/smarttab.kak" defer smarttab %{
     set-option global softtabstop 4
