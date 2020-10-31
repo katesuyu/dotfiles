@@ -1,106 +1,82 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
-ver='0.1.0'
 set -u
+ver='0.1.0'
 
-# If invoked via relative path, ${exe} = the relative path.
-# Otherwise, ${exe} = basename of the full path.
-exe=${0}
-[ -n "${exe##'/'*}" ] || exe=${exe##*'/'}
+# Make it easier to pipe things to /dev/null.
+exec 9<>/dev/null
 
-# It gives the wrong idea if a script can't print usage text or version number
-# without emitting a dependency error, so we hardcode these special cases.
-[ "${#}" -eq 0 ] && {
-    printf 'Usage: %s [command] [options]\n%s\n' "${exe}" \
-        "See \`${exe} --help\` for detailed usage information" >&2
+# Programs tend to blindly attempt to write to these file descriptors and break.
+[ -e /dev/fd/0 ] || exec 0<&9
+[ -e /dev/fd/1 ] || exec 1>&9
+[ -e /dev/fd/2 ] || exec 2>&9
+
+# `exename` is used to behave differently depending on how we are symlinked.
+# `exepath` is printed in usage text and mimics other CLIs' output text.
+exename=${0##*'/'}
+if exepath=$(command -v -- "${exename}" && printf 'n'); then
+    [ "${exepath%?}" = "${0}" ] && exepath=${exename}
+fi || exepath=${0}
+exename=${0%'.sh'}
+
+# Check for required dependencies; print error if any are missing.
+type jq cat mktemp mkfifo rm >&9 || {
+    # If we're invoked normally, at the very least implement the two most basic
+    # CLI functions: non-argument usage text and --version.
+    [ "${exename}" = 'kzdl' ] && {
+        [ "${#}" -eq 0 ] && {
+            printf 'Usage: %s [command] [options]\n%s\n' "${exepath}" \
+                "See \`${exepath} --help\` for detailed usage information" >&2
+            exit 1
+        }
+        [ "${#}" -eq 1 ] && [ "${1}" = '--version' -o "${1}" = '-V' ] && {
+            printf '%s\n' "${ver}"
+            exit
+        }
+    }
+    # Any other functionality is too complex to implement correctly without jq.
+    message=$(
+        type jq >&9     || printf '\n  jq - required for all kzdl functionality'
+        type cat >&9    || printf '\n  cat - required for piping file contents'
+        type mktemp >&9 || printf '\n  mktemp - required to store named pipes'
+        type mkfifo >&9 || printf '\n  mkfifo - required to create named pipes'
+        type rm >&9     || printf '\n  rm - required to clean up temporary state'
+    )
+    printf 'kzdl: Missing dependencies:%s\n' "${message}"
     exit 1
 }
-[ "${#}" -eq 1 ] && [ "${1}" = '--version' -o "${1}" = '-V' ] && {
-    printf '%s\n' "${ver}"
-    exit
-}
-
-# Check if our required dependencies are present.
-unset -v any_missing
-for dep in 'jq' 'mktemp' 'mkfifo' 'rm'; do
-    type "${dep}" >/dev/null || {
-        [ -n "${any_missing+n}" ] || {
-            any_missing=1
-            printf 'kzdl: Missing dependencies:\n' >&2
-        }
-        case "${dep}" in
-            'jq') printf '  jq - required for kzdl to do anything\n' >&2 ;;
-            'mktemp') printf '  mktemp - required to store internal state\n' >&2 ;;
-            'mkfifo') printf '  mkfifo - required to communicate with jq\n' >&2 ;;
-            'rm') printf '  rm - required to clean up temporary files\n' >&2 ;;
-        esac
-    }
-done
-[ -n "${any_missing+n}" ] && exit 1
 
 # Set up our temporary environment and jq communication pipes.
 set -e
-trap 'exec 3<&-; rm -rf -- "${tmpdir}"; exit 1' INT TERM
+trap 'exec 3<&-; rm -rf -- "${tmpdir}"; exit 130' INT
+trap 'exec 3<&-; rm -rf -- "${tmpdir}"; exit 143' TERM
 tmpdir=$(mktemp -d)
 jq_stdin="${tmpdir}/jq_stdin"
 jq_stdout="${tmpdir}/jq_stdout"
+kzdl_internal="${tmpdir}/__internal.jq"
 mkfifo -- "${jq_stdin}" "${jq_stdout}"
 
-# Start jq background process, allowing it to drive further execution.
-jq -Rr --from-file /dev/fd/3 \
-    --unbuffered \
-    --arg exe "${exe}" \
-    --arg ver "${ver}" \
-    --arg tmp "${tmpdir}" \
-    --args -- "${@}" \
-    <"${jq_stdin}" >"${jq_stdout}" 3<< 'JQ_SCRIPT' &
-    # Read a null-terminated input string that can contain newlines.
+# Internal library module shared between the jq scripts.
+cat <<'JQ_SCRIPT' >"${kzdl_internal}"
+    # Read the output of `cat -n` as a single string.
     def read_str:
-        input|until(endswith("\u0000"); . + "\n" + input)[:-1];
+        def read:
+            input
+            | select(length >= 1)
+            | sub("^ *\\d+\\t"; "")
+            | ., read;
+        [read]|join("\n");
 
-    # Format the input eval string such that it can be read from read -r without
-    # choking on internal newlines or requiring extra processing from sh.
+    # Takes an eval string with one or more lines and produces an equivalent
+    # eval string that fits on one line (can be read with `read -r`).
     def escape_eval:
         split("\n") | if length <= 1 then
             (.[0] // "") + "\n"
         else
-            "eval \"$(\(
-                map(@sh "printf \("%s\\n") \(.)")
-                | join(";")
-            ))\"\n"
+            ("%s\\n" * length | @sh)
+            + " \(map(@sh)|join(" "))"
+            | "eval \"$(printf \(.))\"\n"
         end;
-
-    # Parse subcommands, arguments, and options.
-    {
-        _: {
-            header: "kzdl v\($ver) - the respectful package manager",
-            usage: "\($exe) [command] [options]",
-            "General Options": {
-                "help": {
-                    usage: "--help, -h",
-                    description: "print this usage info or that of a subcommand",
-                },
-                "version": {
-                    usage: "--version, -V",
-                    description: "print the current version of kzdl and exit",
-                },
-                "config-file": {
-                    params: 1,
-                    usage: "--config-file [file]",
-                    description: "override the file from which kzdl loads config",
-                },
-            },
-            short: {
-                "h": "help",
-                "V": "version",
-            }
-        },
-        install: {
-            header: "kzdl install - install the specified packages",
-            usage: "\($exe) install [options] [packages...]",
-            description: "install the specified packages",
-        }
-    } | { args: $ARGS.positional } |
 
     # Run the input shell command; set `.status` to its exit status.
     def cmd_status($cmd; f):
@@ -109,14 +85,64 @@ jq -Rr --from-file /dev/fd/3 \
 
     # Run the input shell command; set `.output` to its stdout.
     def cmd_output($cmd; f):
-        @sh "{ eval \($cmd); printf \("\\0\\n"); } >&3",
+        @sh "{ { eval \($cmd); printf '\n'; } | cat -n; printf '\n'; } >&3",
         (.output = read_str | f);
 
     # Check whether $cmd exists in ${PATH}; set `.exists` to the result.
     def require_cmd($cmd; f):
-        cmd_status(@sh "type \($cmd) >/dev/null"; .exists = .status == 0 | f);
+        cmd_status(@sh "type \($cmd) >&9"; .exists = .status == 0 | f);
 
-    # Set `.system` to the name of the current system for download purposes.
+    # Prompt the user to enter 'y' or 'n'; set `.confirm` to the result.
+    def prompt_user($default; $prompt; f):
+        (
+            if $default then " [Y/n] " else " [y/N] " end |
+            @sh "{
+                response=yes
+                [ -t 0 ] && {
+                    printf \("%s") \($prompt + .) >&2
+                    IFS= read -r response
+                }
+                printf \("%s\\n") \"${response}\" >&3
+            } <&7"
+        ), (
+            .confirm = (
+                # Not receiving input implies the death of the parent process.
+                # This can be intentional (Ctrl+C), so let's exit gracefully.
+                input? // ("\nInterrupted!\n"|halt_error(1)) |
+
+                # User pressed enter key, so we choose default option.
+                (select(length == 0)|$default)
+
+                # Accept various ways of saying "yes" or "no".
+                // (select(test("^(?:y|yes|true)$"; "i"))|true)
+                // (select(test("^(?:n|no|false)$"; "i"))|false)
+
+                # Return falsy value 'null' if the string is neither yes nor no.
+                // null
+            ) | f
+        );
+
+    # Shorthands of the above to provide useful defaults.
+    def prompt_user($default; f):
+        prompt_user($default; "Do you wish to continue?"; f);
+    def prompt_user(f):
+        prompt_user(true; f);
+JQ_SCRIPT
+
+# Start jq background process, allowing it to drive further execution.
+jq -Rr -L "${tmpdir}" --unbuffered \
+    --from-file /dev/fd/3 \
+    --arg exename "${exename}" \
+    --arg exepath "${exepath}" \
+    --arg tmp "${tmpdir}" \
+    --arg ver "${ver}" \
+    --args -- "${@}" \
+    <"${jq_stdin}" >"${jq_stdout}" 3<<'JQ_SCRIPT' &
+    include "__internal";
+
+    { args: $ARGS.positional } |
+
+    # Set `.system` to an identifier for the current system.
     def uname(f):
         require_cmd("uname";
             if .exists then
@@ -142,12 +168,16 @@ jq -Rr --from-file /dev/fd/3 \
             end
         );
 
-    # This is the main entry point for the script. Currently a random test case.
-    uname(@sh "printf \("%s\\n") \(.system)"),
+    # Script entry point; current just a testbed for the above functions.
+    uname(prompt_user(
+        if (.confirm) then
+            @sh "printf \("Your system is: %s\\n") \(.system) >&2"
+        else
+            @sh "printf \("Your choice has been acknowledged.\\n") >&2"
+        end
+    )),
 
-    # During this script's execution, kzdl and jq constantly wait on each other
-    # for input. Here we close our stdin pipe and consume all inputs to ensure
-    # that jq and kzdl exit gracefully instead of hanging indefinitely.
+    # Close stdin pipe so jq won't block forever; then, ignore remaining input.
     "exec 3<&-", (inputs|empty)
 
     # Every output that makes it to this point is meant to be interpreted
@@ -155,15 +185,16 @@ jq -Rr --from-file /dev/fd/3 \
     # to exactly one `read -r` instead of being split up due to newlines.
     | escape_eval
 JQ_SCRIPT
-exec 3>"${jq_stdin}" 4>
+
+exec 3>"${jq_stdin}"
 printf '\n' >&3
 set +e
 
 # Eval everything the jq script tells us to.
 status=0
-while read -r evalstr; do
+while IFS= read -r evalstr; do
     eval "${evalstr}"
-done <"${jq_stdout}"
+done 7<&0 <"${jq_stdout}"
 
 # Clean up temporary directory and exit as appropriate.
 rm -rf -- "${tmpdir}"
