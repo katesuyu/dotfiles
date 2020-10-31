@@ -58,20 +58,15 @@ mkfifo -- "${jq_stdin}" "${jq_stdout}"
 
 # Internal library module shared between the jq scripts.
 cat <<'JQ_SCRIPT' >"${kzdl_internal}"
-    # Read the output of `cat -n` as a single string.
+    # Read the output of `cat -n` as an array of lines.
     def read_str:
-        def read:
-            input
-            | select(length >= 1)
-            | sub("^ *\\d+\\t"; "")
-            | ., read;
-        [read]|join("\n");
+        [input | while(length >= 1; input) | sub("^ *\\d+\\t"; "")];
 
     # Takes an eval string with one or more lines and produces an equivalent
     # eval string that fits on one line (can be read with `read -r`).
     def escape_eval:
         split("\n") | if length <= 1 then
-            (.[0] // "") + "\n"
+            .[0] + "\n"
         else
             ("%s\\n" * length | @sh)
             + " \(map(@sh)|join(" "))"
@@ -85,8 +80,15 @@ cat <<'JQ_SCRIPT' >"${kzdl_internal}"
 
     # Run the input shell command; set `.output` to its stdout.
     def cmd_output($cmd; f):
-        @sh "{ { eval \($cmd); printf '\n'; } | cat -n; printf '\n'; } >&3",
-        (.output = read_str | f);
+        @sh "{ { eval \($cmd)
+                printf \("\\n%s\\n") \"${?}\"
+            } | cat -n; printf \("\\n")
+        } >&3", (
+            read_str as $str
+            | .output = ($str[:-1]|join("\n"))
+            | .status = ($str[-1]|tonumber)
+            | f
+        );
 
     # Check whether $cmd exists in ${PATH}; set `.exists` to the result.
     def require_cmd($cmd; f):
@@ -106,19 +108,14 @@ cat <<'JQ_SCRIPT' >"${kzdl_internal}"
             } <&7"
         ), (
             .confirm = (
-                # Not receiving input implies the death of the parent process.
-                # This can be intentional (Ctrl+C), so let's exit gracefully.
                 input? // ("\nInterrupted!\n"|halt_error(1)) |
-
-                # User pressed enter key, so we choose default option.
-                (select(length == 0)|$default)
-
-                # Accept various ways of saying "yes" or "no".
-                // (select(test("^(?:y|yes|true)$"; "i"))|true)
-                // (select(test("^(?:n|no|false)$"; "i"))|false)
-
-                # Return falsy value 'null' if the string is neither yes nor no.
-                // null
+                if length == 0 then
+                    $default
+                elif test("^(?:n|no|false)$"; "i") then
+                    false
+                else
+                    test("^(?:y|yes|true)$"; "i") // null
+                end
             ) | f
         );
 
@@ -173,7 +170,7 @@ jq -Rr -L "${tmpdir}" --unbuffered \
         if (.confirm) then
             @sh "printf \("Your system is: %s\\n") \(.system) >&2"
         else
-            @sh "printf \("Your choice has been acknowledged.\\n") >&2"
+            empty
         end
     )),
 
