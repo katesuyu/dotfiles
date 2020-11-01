@@ -67,10 +67,10 @@ cat <<'JQ_SCRIPT' >"${kzdl_internal}"
 
     # Generate a printf format string that encodes the input string.
     def printf: gsub(
-        "(?<percent>%)|(?<nul>\\0)|(?<newline>\\n)";
-        (.newline|values|"\\n") //
-        (.percent|values|"%%") //
-        (.nul|values|"\\0")
+        "(?<double>[%\\\\])|(?<nul>\\0)|(?<newline>\\n)";
+        (.double|values * 2)
+        // (.nul|values|"\\0")
+        // (.newline|values|"\\n")
     );
 
     # Run the input shell command; set `.status` to its exit status.
