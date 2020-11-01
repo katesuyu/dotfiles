@@ -36,7 +36,7 @@ type jq cat mktemp mkfifo rm >&9 || {
     }
     # Any other functionality is too complex to implement correctly without jq.
     message=$(
-        type jq >&9     || printf '\n  jq - required for all kzdl functionality'
+        type jq >&9     || printf '\n  jq - most of kzdl is written in jq'
         type cat >&9    || printf '\n  cat - required for piping file contents'
         type mktemp >&9 || printf '\n  mktemp - required to store named pipes'
         type mkfifo >&9 || printf '\n  mkfifo - required to create named pipes'
