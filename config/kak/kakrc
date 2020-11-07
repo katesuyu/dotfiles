@@ -9,17 +9,22 @@ nop %sh{
 source "%val{config}/plugins/plug.kak/rc/plug.kak"
 plug "robertmeta/plug.kak" noload
 
+# The best colorscheme ever (this is 100% totally unbiased).
 plug "katesuyu/joule.kak" theme config %{
     colorscheme joule
 }
 
+# Syntax and indentation hook support for the zzz data format.
+plug "katesuyu/zzz.kak"
+
+# Kakoune language server protocol support.
 plug "ul/kak-lsp" do %{
     cargo install --locked --force --path .
 } config %{
-    # Re-activate my chosen colorscheme because kak-lsp overrides with its own face.
+    # Re-activate my chosen colorscheme because kak-lsp overrides some faces.
     colorscheme joule
 
-    # Generate config files for kak-lsp and ZLS to avoid hardcoding ${HOME}.
+    # Generate config for kak-lsp and the Zig language server.
     nop %sh{
         # ${1} = file to overwrite
         # ${2} = contents to write
@@ -30,9 +35,9 @@ plug "ul/kak-lsp" do %{
         }
         lsp_config=$(
             sedstr='s/\[semantic_tokens\]/\0\n'
-            sedstr="${sedstr}"'struct = "type"\n'
-            sedstr="${sedstr}"'union = "type"\n'
-            sedstr="${sedstr}"'enum = "type"\n'
+            #sedstr="${sedstr}"'struct = "type"\n'
+            #sedstr="${sedstr}"'union = "type"\n'
+            #sedstr="${sedstr}"'enum = "type"\n'
             sedstr="${sedstr}"'tagField = "function"\n'
             sedstr="${sedstr}"'errorTag = "function"\n'
             sedstr="${sedstr}"'field = "function"\n'
@@ -62,15 +67,14 @@ plug "ul/kak-lsp" do %{
         ) && overwrite "${HOME}/.config/zls.json" "${zls_config}"
     }
 
-    # kak-lsp has a history of not finding config in the default location.
-    # So we manually point it to a location that's more idiomatic anyway.
+    # Manually point kak-lsp to my custom config location.
     set-option global lsp_cmd %sh{
         printf "%s -c '" "${kak_opt_lsp_cmd}"
         printf "%s" "${kak_config}/kak-lsp.toml" | sed "s/'/'\\\\''/g"
         printf "'"
     }
 
-    # Enable the Zig language server and its semantic token support.
+    # Enable Zig language server + semantic tokens.
     hook global WinSetOption filetype=(zig) %{
         hook window -group semantic-tokens BufReload .* lsp-semantic-tokens
         hook window -group semantic-tokens NormalIdle .* lsp-semantic-tokens
@@ -130,6 +134,15 @@ plug "andreyorst/smarttab.kak" defer smarttab %{
     set-option global softtabstop 4
 } config %{
     hook global WinSetOption filetype=.* expandtab
+    hook global WinSetOption filetype=(zzz) %{
+        require-module smarttab
+        set-option buffer softtabstop 2
+        set-option buffer indentwidth 2
+        hook -once -always window WinSetOption filetype=.* %{
+            unset-option buffer softtabstop
+            unset-option buffer indentwidth
+        }
+    }
 }
 
 # https://github.com/mawww/kakoune/wiki/Indentation-and-Tabulation
