@@ -16,8 +16,29 @@ exec 9<>/dev/null
 exename=${0##*'/'}
 if exepath=$(command -v -- "${exename}" && printf 'n'); then
     [ "${exepath%?}" = "${0}" ] && exepath=${exename}
-fi || exepath=${0}
-exename=${0%'.sh'}
+else
+    exepath=${0}
+fi
+exename=${exename%'.sh'}
+
+# Takes a series of argument pairs:
+#   ${1} = command to check existence of
+#   ${2} = why missing command is required
+require_dep () {
+    [ "$((${#} % 2))" -eq 1 ] && {
+        printf 'kzdl internal bug: odd number of arguments to require_dep\n' >&2
+        exit 1
+    }
+    unset -v message
+    while [ "${#}" -gt 0 ]; do
+        type "${1}" >&9 || message="${message-}  ${1} - ${2}
+";      shift 2
+    done
+    [ -z "${message+n}" ] || {
+        printf 'kzdl: Mising dependencies: \n%s' "${message}" >&2
+        return 1
+    }
+}
 
 # Check for required dependencies; print error if any are missing.
 type jq cat mktemp mkfifo rm >&9 || {
@@ -34,59 +55,76 @@ type jq cat mktemp mkfifo rm >&9 || {
             exit
         }
     }
-    # Any other functionality is too complex to implement correctly without jq.
-    message=$(
-        type jq >&9     || printf '\n  jq - most of kzdl is written in jq'
-        type cat >&9    || printf '\n  cat - required for piping file contents'
-        type mktemp >&9 || printf '\n  mktemp - required to store named pipes'
-        type mkfifo >&9 || printf '\n  mkfifo - required to create named pipes'
-        type rm >&9     || printf '\n  rm - required to clean up temporary state'
-    )
-    printf 'kzdl: Missing dependencies:%s\n' "${message}"
-    exit 1
+    # Outside of the above simple cases, print a useful dependency error.
+    require_dep \
+        'jq' 'most of kzdl is written in jq' \
+        'cat' 'required for piping file contents' \
+        'mktemp' 'required to store named pipes' \
+        'mkfifo' 'required to create named pipes' \
+        'rm' 'required to clean up temporary state' \
+    || exit
 }
 
 # Set up our temporary environment and jq communication pipes.
 set -e
-trap 'exec 3<&-; rm -rf -- "${tmpdir}"; exit 130' INT
-trap 'exec 3<&-; rm -rf -- "${tmpdir}"; exit 143' TERM
+trap 'exec 3<&-; kill %2 2>&9; wait; rm -rf -- "${tmpdir}"; exit 130' INT
+trap 'exec 3<&-; kill %2 2>&9; wait; rm -rf -- "${tmpdir}"; exit 143' TERM
 tmpdir=$(mktemp -d)
 jq_stdin="${tmpdir}/jq_stdin"
 jq_stdout="${tmpdir}/jq_stdout"
-kzdl_internal="${tmpdir}/__internal.jq"
 mkfifo -- "${jq_stdin}" "${jq_stdout}"
 
-# Internal library module shared between the jq scripts.
-cat <<'JQ_SCRIPT' >"${kzdl_internal}"
+# Start jq background process, allowing it to drive further execution.
+jq -Rr -L "${tmpdir}" --unbuffered \
+    --from-file /dev/fd/3 \
+    --arg exename "${exename}" \
+    --arg exepath "${exepath}" \
+    --arg tmp "${tmpdir}" \
+    --arg ver "${ver}" \
+    --args -- "${@}" \
+    <"${jq_stdin}" >"${jq_stdout}" 3<<'JQ_SCRIPT' &
+    { args: $ARGS.positional } |
+
     # Run the requested filter only for non-string inputs.
-    def N(f): strings // f;
+    def N(f):
+        strings // f;
 
-    # Read the output of `cat -n` as an array of lines.
-    def read_str:
-        [input | while(length >= 1; input) | sub("^ *\\d+\\t"; "")];
+    # Read an input, halting with an error if this is not possible.
+    def try_input:
+        "Interrupted!\n" | input? // halt_error(1);
 
-    # Generate a printf format string that encodes the input string.
-    def printf: gsub(
-        "(?<double>[%\\\\])|(?<nul>\\0)|(?<newline>\\n)";
-        (.double|values * 2)
-        // (.nul|values|"\\0")
-        // (.newline|values|"\\n")
-    );
+    # Read the output of `cat -n` as a stream of lines.
+    def read_lines:
+        try_input | while(length >= 1; try_input) | sub("^ *\\d+\\t"; "");
+
+    # Generate shell-escaped printf command argv.
+    def printf:
+        reduce
+            capture("(?<nul>\\0)|(?<newline>\\n)|(?<str>[^\\0\\n]+)"; "g")
+        as $capture (
+            [""]; first(
+                (select($capture.nul) | .[0] += "\\0"),
+                (select($capture.newline) | .[0] += "\\n"),
+                (.[0] += "%s") + [$capture.str|@sh]
+            )
+        ) | .[0] |= @sh;
 
     # Run the input shell command; set `.status` to its exit status.
     def cmd_status($cmd):
         $cmd, @sh "printf \("%s\\n") \"${?}\" >&3",
-        .status = (input|tonumber);
+        .status = (try_input|tonumber);
 
     # Run the input shell command; set `.output` to stdout and `.status` to exit status.
     def cmd_output($cmd):
-        @sh "{ { eval \($cmd)
-                printf \("\\n%s\\n") \"${?}\"
-            } | cat -n; printf \("\\n")
+        "{ { \($cmd)\n
+                printf \("\\n%s\\n"|@sh) \"${?}\"
+            } | cat -n; printf \("\\n"|@sh)
         } >&3", (
-            read_str as $str
-            | .output = ($str[:-1]|join("\n"))
-            | .status = ($str[-1]|tonumber)
+            . + reduce read_lines as $line ({};
+                (.output|values) += "\n"
+                | .output += .status
+                | .status = $line
+            ) | .status |= tonumber
         );
 
     # Check whether $cmd exists in ${PATH}; set `.exists` to the result.
@@ -94,7 +132,7 @@ cat <<'JQ_SCRIPT' >"${kzdl_internal}"
         cmd_status(@sh "type \($cmd) >&9") | N(.exists = .status == 0);
 
     # Prompt the user to enter 'y' or 'n'; set `.confirm` to the result.
-    def prompt_user($default; $prompt; $interrupt):
+    def prompt_user($default; $prompt):
         (
             if $default then " [Y/n] " else " [y/N] " end |
             @sh "{
@@ -107,77 +145,57 @@ cat <<'JQ_SCRIPT' >"${kzdl_internal}"
             } <&7"
         ), (
             .confirm = (
-                input? // ("\n\($interrupt)\n"|halt_error(1)) |
-                if length == 0 then
-                    $default
-                elif test("^(?:n|no|false)$"; "i") then
-                    false
-                else
-                    test("^(?:y|yes|true)$"; "i") // null
-                end
+                input? // ("\nInterrupted!\n"|halt_error(1)) |
+                first(
+                    (select(length == 0)|$default),
+                    (test("^no*$"; "i")|select(.)|not),
+                    test("^y(?:es?)?$"; "i") // null
+                )
             )
         );
 
     # Shorthands of the above to provide useful defaults.
-    def prompt_user($default; $prompt):
-        prompt_user($default; $prompt; "Interrupted!");
     def prompt_user($default):
         prompt_user($default; "Do you wish to continue?");
     def prompt_user:
         prompt_user(true);
-JQ_SCRIPT
 
-# Start jq background process, allowing it to drive further execution.
-jq -Rr -L "${tmpdir}" --unbuffered \
-    --from-file /dev/fd/3 \
-    --arg exename "${exename}" \
-    --arg exepath "${exepath}" \
-    --arg tmp "${tmpdir}" \
-    --arg ver "${ver}" \
-    --args -- "${@}" \
-    <"${jq_stdin}" >"${jq_stdout}" 3<<'JQ_SCRIPT' &
-    include "__internal";
-
-    { args: $ARGS.positional } |
-
-    # Set `.system` to an identifier for the current system.
-    def uname:
+    # Store the current OS and architecture in `.system`.
+    def get_system:
         require_cmd("uname") | N(
             if .exists then
                 cmd_output("uname") | N(
-                    .system = (
-                        .output |
-                        (select(startswith("Linux"))|"linux")
-                        // (select(startswith("Darwin"))|"macos")
-                        // (select(startswith("Windows"))|"windows")
-                        // (select(startswith("MSYS"))|"windows")
-                        // (select(startswith("MINGW"))|"windows")
-                        // (select(startswith("CYGWIN"))|"windows")
-                        // (select(startswith("NetBSD"))|"netbsd")
-                        // (select(startswith("FreeBSD"))|"freebsd")
-                        // (select(startswith("OpenBSD"))|"openbsd")
-                        // (select(startswith("DragonFly"))|"dragonflybsd")
-                        // (select(startswith("SunOS"))|"solaris")
-                        // null
-                    )
-                )
+                    def case($a; f):
+                        select(startswith($a))|$a|f;
+                    .system = {
+                        os: first(
+                            .output |
+                            case("Linux", "Windows", "NetBSD", "FreeBSD", "OpenBSD"; ascii_downcase),
+                            case("MSYS", "MINGW", "CYGWIN"; "windows"),
+                            case("DragonFly"; "dragonflybsd"),
+                            case("SunOS"; "solaris"),
+                            null
+                        )
+                    }
+                ) | N(cmd_output("uname -m"))
+                | N(.system.arch = .output[:-1])
+                | N(.system |= (.double = "\(.arch)-\(.os)"))
             else
-                .system = null
+                .system = {os: null, arch: null, double: null}
             end
         );
 
     # Script entry point; current just a testbed for the above functions.
     def main:
-        uname | N(prompt_user) | N(
+        get_system | N(prompt_user) | N(
             if .confirm then
-                @sh "printf \("Your system is: %s\\n") \(.system) >&2"
+                @sh "printf \("Your system is: %s\\n") \(.system.double) >&2"
             else
                 @sh "printf \("Canceled!\\n") >&2"
             end
         );
-    main, "exec 3<&-" | printf
+    main, "exec 3<&-" | printf | join(" ")
 JQ_SCRIPT
-
 exec 3>"${jq_stdin}"
 printf '\n' >&3
 set +e
@@ -185,7 +203,7 @@ set +e
 # Eval everything the jq script tells us to.
 status=0
 while IFS= read -r evalstr; do
-    eval "$(printf "%s${evalstr}" '')"
+    eval 'eval "$(printf '"${evalstr}"')"'
 done 7<&0 <"${jq_stdout}"
 
 # Clean up temporary directory and exit as appropriate.

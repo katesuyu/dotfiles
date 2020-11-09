@@ -34,22 +34,25 @@ plug "ul/kak-lsp" do %{
                 printf '%s\n' "${2}" >"${1}"
         }
         lsp_config=$(
-            sedstr='s/\[semantic_tokens\]/\0\n'
-            #sedstr="${sedstr}"'struct = "type"\n'
-            #sedstr="${sedstr}"'union = "type"\n'
-            #sedstr="${sedstr}"'enum = "type"\n'
-            sedstr="${sedstr}"'tagField = "function"\n'
-            sedstr="${sedstr}"'errorTag = "function"\n'
-            sedstr="${sedstr}"'field = "function"\n'
-            sedstr="${sedstr}"'parameter = "variable"/'
-            sed "${sedstr}" <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
+            exec 3<<EOF
+tagField = "function"
+errorTag = "function"
+field = "function"
+parameter = "variable"
+EOF
+exec 4<<EOF
+namespace = "module"
+EOF
+            exec 5<<EOF
 
-            printf '\n[language.zig]\n'
-            printf 'filetypes = ["zig"]\n'
-            printf 'roots = ["build.zig"]\n'
-            printf 'command = "'
-            printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g'
-            printf '"'
+[language.zig]
+filetypes = ["zig"]
+roots = ["build.zig"]
+command = "$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g')"
+EOF
+            sed '/^\[semantic_tokens\]$/r /dev/fd/3
+                /^\[semantic_modifiers\]$/r /dev/fd/4
+                $r /dev/fd/5' <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
         ) && overwrite "${kak_config}/kak-lsp.toml" "${lsp_config}"
         zls_config=$(
             zig_exe_path="${HOME}/.local/zig/zig" \
