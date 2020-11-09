@@ -178,7 +178,7 @@ jq -Rr -L "${tmpdir}" --unbuffered \
                         )
                     }
                 ) | N(cmd_output("uname -m"))
-                | N(.system.arch = .output[:-1])
+                | N(.system.arch = (.output[:-1]|ascii_downcase))
                 | N(.system |= (.double = "\(.arch)-\(.os)"))
             else
                 .system = {os: null, arch: null, double: null}
