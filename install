@@ -3,7 +3,7 @@
 
 # Run `ln -f` if the destination is a symlink, or `ln -i` otherwise.
 ln_Tfi () {
-    mkdir -p -- "$(dirname -- "${1}")" || return
+    mkdir -p -- "$(dirname -- "${1}")" && \
     if [ -L "${1}" ]; then
         ln -Tsrf -- "${2}" "${1}"
     else
@@ -17,24 +17,23 @@ ln_fi () {
 cd "$(dirname -- "$(readlink -ne -- "${0}")")"
 
 # Link files needed for correct system operation.
-ln_Tfi "${HOME}/.profile" "$(pwd)/profile"
-ln_Tfi "${HOME}/.zshenv" "$(pwd)/profile"
-ln_Tfi "${HOME}/.zshrc" "$(pwd)/zshrc"
-ln_Tfi "${HOME}/.gitconfig" "$(pwd)/gitconfig"
-ln_Tfi "${HOME}/.gitignore" "$(pwd)/gitignore"
-ln_fi "${HOME}/.local/share" "$(pwd)/shrc"
+ln_Tfi "${HOME}/.profile" 'profile'
+ln_Tfi "${HOME}/.zshenv" 'profile'
+ln_Tfi "${HOME}/.zshrc" 'zshrc'
+ln_Tfi "${HOME}/.gitconfig" 'gitconfig'
+ln_Tfi "${HOME}/.gitignore" 'gitignore'
+ln_fi "${HOME}/.local/share" 'shrc'
 
 # Link personal scripts to make available in PATH.
-for file in "$(pwd)/scripts/"*; do
-    [ ! -e "${file}" ] && continue
-    ln_fi "${HOME}/.local/bin" "${file}"
+for file in 'scripts/'*; do
+    [ -e "${file}" ] && ln_fi "${HOME}/.local/bin" "${file}"
 done
 
 # Link kakrc and its sub-files.
-ln_fi "${HOME}/.config/kak" "$(pwd)/config/kak/kakrc"
-ln_fi "${HOME}/.config/kak" "$(pwd)/config/kak/rc"
+ln_fi "${HOME}/.config/kak" 'config/kak/kakrc'
+ln_fi "${HOME}/.config/kak" 'config/kak/rc'
 
 # Link license and gitignore templates.
-ln_fi "${HOME}/templates" "$(pwd)/templates/gitignore"
-ln_fi "${HOME}/templates" "$(pwd)/templates/licenses"
-ln_fi "${HOME}/templates" "$(pwd)/templates/license-headers"
+ln_fi "${HOME}/templates" 'templates/gitignore'
+ln_fi "${HOME}/templates" 'templates/licenses'
+ln_fi "${HOME}/templates" 'templates/license-headers'
