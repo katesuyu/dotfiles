@@ -1,18 +1,14 @@
 #!/usr/bin/env zsh
 # SPDX-License-Identifier: 0BSD
 
-. "${SHRC}/shellrc"
-PS1='%B%F{red}%n%f %F{blue}%~%f%b '
-
 update-zig () (
-    # Define ZIGDIR and ZIGEXE variables if not already defined.
-    [ -z "${ZIGDIR}" ] && ZIGDIR="${HOME}/.local/zig"
-    [ -z "${ZIGEXE}" ] && ZIGEXE="${ZIGDIR}/zig"
+    zig_dir="${HOME}/.local/zig"
+    zig_exe="${zig_dir}/zig"
 
     # Get the url of the latest available Zig download.
     url () {
-        local arch=$(uname -m)
-        local url=$(
+        arch=$(uname -m)
+        url=$(
             curl 'https://ziglang.org/download/index.json' --no-progress-meter \
             | jq -r '.master."'"${arch}"'-linux".tarball'
         )
@@ -27,8 +23,8 @@ update-zig () (
     query () {
         # Invoke 'zig version' to retrieve current version. Failure implies Zig is
         # not installed, which is ok, we handle first time installs too.
-        local oldver=$("${ZIGEXE}" version 2>/dev/null || printf '[not installed]')
-        local newver=$(latest "${1}")
+        oldver=$("${zig_exe}" version 2>/dev/null || printf '[not installed]')
+        newver=$(latest "${1}")
 
         # We already have the latest version of Zig. Nothing more needs to be done.
         [ -z "${F}" ] && [ "${oldver}" == "${newver}" ] && exit
@@ -45,12 +41,12 @@ update-zig () (
     # Download and install the new version.
     install () {
         # Ensure Zig directory exists and clear out any existing installation.
-        mkdir -p "${ZIGDIR}" || exit
-        find "${ZIGDIR}" -mindepth 1 -delete || exit
+        mkdir -p "${zig_dir}" || exit
+        find "${zig_dir}" -mindepth 1 -delete || exit
 
         # Download the new version, stripping out the root folder as we don't need it.
         printf 'Downloading %s\n' "${1}" >&2
-        curl "${1}" | tar --directory "${ZIGDIR}" --strip-components 1 -Jx
+        curl "${1}" | tar --directory "${zig_dir}" --strip-components 1 -Jx
     }
 
     F= && [[ "${1}" == 'force' ]] && F='force' && shift
@@ -85,3 +81,6 @@ update-zls () (
     # so if nothing else changed to force us to rebuild, this command is instant.
     zig build -Drelease-safe -Ddata_version=master --prefix .
 )
+
+. "${SHRC}/shellrc"
+PS1='%B%F{red}%n%f %F{blue}%~%f%b '

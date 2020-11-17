@@ -7,4 +7,6 @@ alias zigstd='"${SHRC}/zigstd"'
 
 killfirefox () (
     kill -9 "$(ps --no-header -o pid -C firefox | head -n 1 | sed 's/^ \+//')"
+    sleep 1
+    kill -9 "$(ps --no-header -o pid -C firefox | head -n 1 | sed 's/^ \+//')"
 )
