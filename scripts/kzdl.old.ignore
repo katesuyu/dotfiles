@@ -1,0 +1,712 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+
+# Determine system, load config file into memory, and parse options and parameters.
+main () {
+    # Find the current system if `uname` is available.
+    unset -v system
+    type uname >/dev/null && \
+        case "$(uname)" in
+            'Windows'* | 'MSYS'* | 'MINGW'* | 'CYGWIN'*) system=windows ;;
+            'Darwin'*) system=macos ;;
+            'NetBSD'*) system=netbsd ;;
+            'FreeBSD'*) system=freebsd ;;
+            'OpenBSD'*) system=openbsd ;;
+            'DragonFly'*) system=dragonflybsd ;;
+            'SunOS'*) system=solaris ;;
+            'Linux'*) system=linux ;;
+        esac
+
+    # Search this path for a config file in case the user does not realize
+    # we use the XDG / APPDATA / Application Support paths by default.
+    fallback_config_path="${HOME}/.config/kzdl/kzdl.json"
+    fallback_config_path2="${HOME}/.config/kzdl.json"
+
+    # Find the system-dependent location to place config files.
+    if [ -n "${XDG_CONFIG_HOME+n}" ]; then
+        # This is the most appropriate config location on Linux, and
+        # it doesn't do any harm to check here on other OSes.
+        default_config_path="${XDG_CONFIG_HOME}/kzdl/kzdl.json"
+        default_config_path2="${XDG_CONFIG_HOME}/kzdl.json"
+    elif [ -n "${APPDATA+n}" ] && [ "${system-windows}" = 'windows' ]; then
+        # If we find this environment variable, and `uname` didn't tell us we
+        # were on a different OS (env var could leak into WSL or something),
+        # use ${APPDATA} to store configuration.
+        system=windows
+        default_config_path="${APPDATA}/kzdl/kzdl.json"
+        default_config_path2="${APPDATA}/kzdl.json"
+    elif [ "${system}" = 'macos' ]; then
+        # This is the recommended location for macOS config; a lot of macOS
+        # users do not like their ${HOME} being cluttered with dotfiles.
+        default_config_path="${HOME}/Library/Application Support/kzdl/kzdl.json"
+        default_config_path2="${HOME}/Library/Application Support/kzdl.json"
+    else
+        # Either we don't know the operating system, we don't know the canonical
+        # location for config on the operating system, or it's Linux and the
+        # user did not specify ${XDG_CONFIG_HOME}.
+        default_config_path=${fallback_config_path}
+        default_config_path2=${fallback_config_path2}
+        unset -v fallback_config_path
+        unset -v fallback_config_path2
+    fi
+
+    case "${0}" in
+        # We have been invoked as `zig`. Wrap the default compiler but allow
+        # the version to be overriden with the syntax `zig +[version] ...`
+        'zig' | *'/zig' | 'zig.sh' | *'/zig.sh')
+            wrap_zig "${@}" ;;
+    esac
+
+    # Extract options into variables while removing them from `${@}`.
+    parse_args "${@}" && eval "${eval_string}"
+
+    # Be a bit silly if --help is specified 3 or more times.
+    case "${opt_help}" in
+        '' | [1-2]) unset -v usage_header ;;
+        [3-6]) usage_header="Here is your usage info, as requested ${opt_help} times..." ;;
+        *) usage_header="Do you really need help? I'm sorry, I can't tell.
+It's not like you requested it ${opt_help} times or anything..." ;;
+    esac
+
+    # Handle --help, --version, and invoking `kzdl` with no subcommand.
+    [ -n "${opt_help+n}" ] && \
+        case "${subcommand}" in
+            '') main_usage && exit ;;
+            'install') install_usage && exit ;;
+            'config') config_usage && exit ;;
+            *) invalid todo "usage for subcommand ${subcommand}" ;;
+        esac
+    [ -n "${opt_version+n}" ] && printf '0.1.0\n' && exit
+    [ -z "${subcommand+n}" ] && invalid usage '[command] [options]'
+
+    # Check whether we can read the config file.
+    unset -v config_err
+    if [ -n "${opt_config_path+n}" ]; then
+        config_path=${opt_config_path}
+        [ -f "${config_path}" ]
+    else
+        config_path=${default_config_path}
+        [ -f "${config_path}" ] || {
+            [ -f "${default_config_path2}" ] && \
+            config_path=${default_config_path2}
+        } || {
+            [ -n "${fallback_config_path+n}" ] && \
+            [ -f "${fallback_config_path}" ] && \
+            config_path=${fallback_config_path}
+        } || {
+            [ -n "${fallback_config_path2+n}" ] && \
+            [ -f "${fallback_config_path2}" ] && \
+            config_path=${fallback_config_path2}
+        }
+    fi
+
+    # Retrieve config data if the above checks succeeded and we have `jq`.
+    { [ "${?}" -eq 0 ] && type jq >/dev/null && \
+        config=$(export config_path; jq -c '
+            if isempty(input?)|not then
+                "Config file has multiple root objects
+                Check \($ENV.config_path)\n"|halt_error
+            elif type != "object"
+                "Config file has non-object root value: \(type)
+                Check \($ENV.config_path)\n"|halt_error
+            else . end
+        ' -- "${config_path}")
+    } || {
+        # We only care about `jq` errors (2, 3, or 5).
+        # `[ ]` and `type` only return errors of 1.
+        case "${?}" in
+            [!1]) config_err=${?} ;;
+        esac
+        unset -v config
+    }
+}
+
+# Print an 'invalid usage' error message, with the specific text dependent
+# on the provided parameter ${1} (which can reference ${2} or ${3}).
+invalid () {
+    case "${1}" in
+        'end-of-option') message="End-of-option mark '--' must follow a subcommand" ;;
+        'usage') message="Usage: ${0} ${2}" ;;
+        'option') message="Bad option string: ${2}" ;;
+        'cluster') message="Unexpected characters after option ${2}: ${3}" ;;
+        'subcommand') message="Unrecognized subcommand: ${2}" ;;
+        'argument-value') message="Option does not take argument: ${2}" ;;
+        'unknown-value') message="Unrecognized argument to option ${2}: ${3}" ;;
+        'missing-command') message="Expected a command after ${2}" ;;
+        'missing-value') message="Expected a value after option: ${2}" ;;
+        'unknown-option') message="Unrecognized option: ${2}" ;;
+        'unknown-alias') message="Unrecognized compiler alias: ${2}" ;;
+        'unknown-version') message="Unrecognized compiler version: ${2}" ;;
+        'dangling-alias') message="Alias does not correspond to an installed version: ${2}" ;;
+        'custom') message="${2}" ;;
+        *) message="Internal error: ${1}: ${2}" ;;
+    esac
+    printf '%s\nSee `%s --help` for detailed usage information\n' "${message}" "${0}" >&2
+    exit 1
+}
+
+# Usage text describing the available subcommands and options.
+main_usage () {
+usage_header=${usage_header-'kzdl v0.1.0 - configurable Zig version multiplexer'}
+printf '%s\n
+Usage: %s [command] [options]\n\nCommands:%s' "${usage_header}" "${0}" '
+  install
+    install the specified versions of Zig
+
+  update
+    update Zig installations based on preferences
+
+  remove
+    remove specified Zig versions
+
+  clean
+    clean unused Zig versions based on configured cleaning policy
+
+  config
+    generate and update kzdl configuration
+
+  query
+    list installed Zig versions and check for updates
+
+  run
+    invoke Zig compiler specified by a version or alias identifier
+
+General Options:
+'"${general_options}"'
+'; }
+
+# Basic set of options available for every subcommand.
+general_options='
+  --help, -h
+    print this usage info or that of a subcommand
+
+  --version, -V
+    print the current version of kzdl and exit
+
+  --config-file [file]
+    override the file from which configuration is loaded
+
+  -- (end-of-options mark)
+    suppress option parsing for further arguments
+'
+general_options=${general_options#?}
+general_options=${general_options%?}
+
+install_usage () {
+usage_header=${usage_header-'kzdl install - install the specified versions of Zig'}
+printf '%s\n
+Usage: %s install [options] [versions...]\n\nVersions:%s' "${usage_header}" "${0}" "
+  master
+    the latest CI build available from ziglang.org
+
+  stable
+    the latest official version as listed on ziglang.org
+
+  [X.Y.Z] (0.6.0)
+    a specific version provided in semver notation
+
+  [X.Y.Z+hash] (0.6.0+bd449b184)
+    a specific post-X.Y.Z development version, identified by commit hash
+
+Install Options:
+  --alias [name], -a [name]
+    configure an alias for the installed Zig version
+
+  --date-alias
+    use the installed Zig version's build date as an alias
+
+  --store-root [dir], -R [dir]
+    override the directory in which all Zig versions are installed
+
+  --output-dir [dir]
+    override the directory in which a specific Zig version is unpacked
+
+  --os [name]
+    the operating system upon which the downloaded versions should run
+
+  --arch [name]
+    the CPU architecture upon which the downloaded versions should run
+
+General Options:
+${general_options}
+"; }
+
+config_usage () {
+usage_header=${usage_header-'kzdl config - generate and update kzdl configuration'}
+printf '%s\n
+Usage: %s config [options]\n\nConfig Options:%s' "${usage_header}" "${0}" "
+  --setup, -S
+    kzdl cannot know where to write files without manual specification,
+      so this interative setup is highly recommended to initialize
+      kzdl, as it will produce more precise results
+
+  --preset [preset], -P [preset]
+    generate a config file with one of the following presets:
+     * minimal  needed so kzdl knows where to install files and store
+                  metadata; does not otherwise change defaults
+     * general  minimal settings with standard cleaning policy, explicit
+                  auto pinning policy, auto date aliasing policy
+     * auto     general settings but with clean-on-update enabled
+
+  --store-root [dir], -R [dir]
+    override the directory in which all Zig versions are unpacked
+
+  --default [version], -D [version]
+    configure a default version of Zig for \`kzdl run\`
+      (the version will be pinned if it wasn't already)
+
+  --no-default
+    reverse the effect of --default (the version will not be unpinned)
+
+  --pin [version|stable|master]
+    pin the version or channel to exclude it from the cleaning policy
+      and display it more prominently in the list of installed versions
+
+  --unpin [version|stable|master]
+    reverse the effect of --pin for the specified version or channel
+
+  --auto-clean
+    execute the configured cleaning policy during \`kzdl update\`
+
+  --no-auto-clean
+    do not execute the cleaning policy during \`kzdl update\`
+
+  --hard-tabs
+    use hard tabs in the generated config
+
+  --soft-tabs [width]
+    use soft tabs in the generated config
+
+  --auto-pin [policy]
+    generate a pinning policy based on one of these presets:
+     * never     never automatically pin versions
+     * explicit  automatically pin explicitly installed versions
+                   (can be overridden with \`install --temp\`)
+     * always    pin every version downloaded, explicit or not
+                   (generally, \`--clean never\` is preferable)
+
+  --clean [policy]
+    generate a cleaning policy based on one of these presets:
+     * never     do not clean versions; \`kzdl clean\` does nothing
+     * standard  keep up to 2 stable builds and 5 master builds
+     * strict    keep only the latest stable and master builds
+
+  --symlink [policy]
+    generate a symlink policy based on one of these presets:
+     * never   do not symlink Zig compiler or lib folder
+     * direct  symlink the default Zig compiler and lib folder
+     * smart   symlink \`kzdl\` as \`zig\`, which \`kzdl\` handles by
+                 passing arguments directly to the real \`zig\`;
+                 if the first argument is of the form \`+version\`,
+                 it will override the default choice of Zig version
+
+  --exe-path [path], -X [path]
+    specify the canonical path for the Zig executable
+
+  --lib-path [path], -Y [path]
+    specify the canonical path for the Zig lib directory
+
+  --interactive [action]
+    configure whether the specified action will prompt for confirmation
+     * config    \`kzdl config\` will display a preview of the modified
+                   or generated config, and request confirmation
+     * install   \`kzdl install\` will display a preview of the files to
+                   be installed, and request confirmation
+     * update    \`kzdl update\` will display a preview of the files to
+                   be installed or cleaned, and request confirmation
+     * remove    \`kzdl remove\` will display a preview of the files to
+                   be removed and request confirmation
+     * clean     \`kzdl clean\` will display a preview of the effects
+                   of the clean operation and request confirmation
+
+  --no-interactive [action]
+    do not request confirmation for the specified action
+
+General Options:
+${general_options}
+"; }
+
+init_config_opt () {
+    subcmd_short_opt=config_short_opt
+    subcmd_long_opt=config_long_opt
+    unset -v opt_preset opt_store_root opt_default opt_no_default opt_pin \
+        opt_unpin opt_auto_clean opt_no_auto_clean opt_hard_tabs opt_soft_tabs \
+        opt_auto_pin opt_clean opt_symlink opt_exe_path opt_lib_path \
+        opt_interactive_config opt_no_interactive_config \
+        opt_interactive_install opt_no_interactive_install \
+        opt_interactive_update opt_no_interactive_update \
+        opt_interactive_remove opt_no_interactive_remove \
+        opt_interactive_clean opt_no_interactive_clean opt_setup
+}
+
+config_long_opt () {
+    case "${long_opt_key}" in
+        'preset' | 'store-root' | 'default' | 'pin' | \
+        'unpin' | 'soft-tabs' | 'auto-pin' | 'clean' | \
+        'symlink' | 'exe-path' | 'lib-path' | \
+        'interactive' | 'no-interactive')
+            long_opt_value "${@}" ;;
+        'setup' | 'no-default' | 'auto-clean' | \
+        'no-auto-clean' | 'hard-tabs')
+            long_opt_novalue "${@}" ;;
+        *) return 1 ;;
+    esac
+    case "${long_opt_key}" in
+        'setup') opt_setup=1 ;;
+        'no-default') unset -v opt_default
+            opt_no_default=1 ;;
+        'auto-clean') unset -v opt_no_auto_clean
+            opt_auto_clean=1 ;;
+        'no-auto-clean') unset -v opt_auto_clean
+            opt_no_auto_clean=1 ;;
+        'hard-tabs') unset -v opt_soft_tabs
+            opt_hard_tabs=1 ;;
+        'preset') case "${long_opt_value}" in
+                'minimal' | 'general' | 'auto') opt_preset=${long_opt_value} ;;
+                *) invalid unknown-value '--preset' "${long_opt_value}" ;;
+            esac ;;
+        'store-root') opt_store_root=${long_opt_value} ;;
+        'default') unset -v opt_no_default
+            opt_default=${long_opt_value} ;;
+        'pin') opt_pin=$((${opt_pin-0} + 1))
+            dynamic "opt_pin__${opt_pin}" "${long_opt_value}" ;;
+        'unpin') opt_unpin=$((${opt_unpin-0} + 1))
+            dynamic "opt_pin__${opt_pin}" "${long_opt_value}" ;;
+        'soft-tabs') unset -v opt_hard_tabs
+            opt_soft_tabs=${long_opt_value} ;;
+        'auto-pin') case "${long_opt_value}" in
+                'never' | 'explicit' | 'always') opt_auto_pin=${long_opt_value} ;;
+                *) invalid unknown-value '--auto-pin' "${long_opt_value}" ;;
+            esac ;;
+        'clean') case "${long_opt_value}" in
+                'never' | 'standard' | 'strict') opt_clean=${long_opt_value} ;;
+                *) invalid unknown-value '--clean' "${long_opt_value}" ;;
+            esac ;;
+        'symlink') case "${long_opt_value}" in
+                'never' | 'direct' | 'smart') opt_symlink=${long_opt_value} ;;
+                *) invalid unknown-value '--symlink' "${long_opt_value}" ;;
+            esac ;;
+        'exe-path') opt_exe_path=${long_opt_value} ;;
+        'lib-path') opt_lib_path=${long_opt_value} ;;
+        'interactive') case "${long_opt_value}" in
+                'config') unset -v opt_no_interactive_config
+                    opt_interactive_config=1 ;;
+                'install') unset -v opt_no_interactive_install
+                    opt_interactive_install=1 ;;
+                'update') unset -v opt_no_interactive_update
+                    opt_interactive_update=1 ;;
+                'remove') unset -v opt_no_interactive_remove
+                    opt_interactive_remove=1 ;;
+                'clean') unset -v opt_no_interactive_clean
+                    opt_interactive_clean=1 ;;
+                *) invalid unknown-value '--interactive' "${long_opt_value}" ;;
+            esac ;;
+        'no-interactive') case "${long_opt_value}" in
+                'config') unset -v opt_interactive_config
+                    opt_no_interactive_config=1 ;;
+                'install') unset -v opt_interactive_install
+                    opt_no_interactive_install=1 ;;
+                'update') unset -v opt_interactive_update
+                    opt_no_interactive_update=1 ;;
+                'remove') unset -v opt_interactive_remove
+                    opt_no_interactive_remove=1 ;;
+                'clean') unset -v opt_interactive_clean
+                    opt_no_interactive_clean=1 ;;
+                *) invalid unknown-value '--no-interactive' "${long_opt_value}" ;;
+            esac ;;
+    esac
+}
+
+config_short_opt () {
+    case "${short_opt}" in
+        [PRDXY]) short_opt_value "${@}" ;;
+    esac
+    case "${short_opt}" in
+        S) opt_setup=1 ;;
+        P) case "${2}" in
+                'minimal' | 'general' | 'auto') opt_preset=${2} ;;
+                *) invalid unknown-value '-P' "${2}" ;;
+            esac ;;
+        R) opt_store_root=${2} ;;
+        D) unset -v opt_no_default ;;
+            opt_default=${2} ;;
+        X) opt_exe_path=${2} ;;
+        Y) opt_lib_path=${2} ;;
+        *) return 1 ;;
+    esac
+}
+
+# Fully parse the arguments, correctly categorizing options, option payloads,
+# and subcommands. Sets `eval_string` to a correctly quoted `set --` command
+# that removes all arguments except for non-option positional parameters.
+parse_args () {
+    eval_string='set --'
+    true_index=1 # `${N}` to use in `eval_string`.
+    logical_index=0 # `${N}` which is valid post-eval.
+    shift_amount=1 # Amount to shift per iteration.
+    unset -v subcommand subcmd_long_opt subcmd_short_opt \
+        end_of_option opt_help opt_version opt_config_path
+    while [ "${#}" -gt 0 ]; do
+        if [ -n "${end_of_option+n}" ]; then
+            # Add the index of this non-option positional parameter.
+            eval_string="${eval_string}"' "${'"${true_index}"'}"'
+        else
+            case "${1}" in
+                '--') [ -z "${subcommand+n}" ] && invalid end-of-option
+                    end_of_option=1 ;;
+                '---'*) invalid option "${1}" ;;
+                '--'*) read_long_opt "${@}" ;;
+                '-'?*) read_short_opt "${@}" ;;
+                *) logical_index=$((logical_index + 1))
+                if [ -z "${subcommand+n}" ]; then
+                    case "${1}" in
+                        'config') init_config_opt ;;
+                        *) invalid subcommand "${1}" ;;
+                    esac
+                    subcommand=${1}
+                else
+                    # Add the index of this non-option positional parameter.
+                    eval_string="${eval_string}"' "${'"${true_index}"'}"'
+                fi ;;
+            esac
+        fi
+        shift "${shift_amount}"
+        true_index=$((${true_index} + ${shift_amount}))
+        shift_amount=1
+    done
+}
+
+# Parse short option clusters and their values. Sets `shift_amount` to
+# a higher value as appropriate for any values the option may have taken.
+read_short_opt () {
+    cluster=${1#?}
+    case "${cluster}" in
+        *[!a-zA-Z0-9]*) invalid option "${1}" ;;
+    esac
+    while [ "${#cluster}" -gt 0 ]; do
+        short_opt=${cluster#?}
+        short_opt=${cluster%"$short_opt"}
+        "${subcmd_short_opt-false}" "${@}" || {
+            case "${short_opt}" in
+                h) opt_help=$((${opt_help-0} + 1)) ;;
+                V) opt_version=1 ;;
+                *) invalid unknown-option "-${short_opt}" ;;
+            esac
+        }
+        cluster=${cluster#?}
+    done
+}
+
+# Parse long options and their values, handling both `key=value` and
+# `key` `value` forms as appropriate. Sets `shift_amount` to a higher
+# value as appropriate for any values the option may have taken.
+read_long_opt () {
+    # Parse both "conjoined" key=value and separate ${key} ${value}. Track
+    # information required to emit missing value errors.
+    case "${1}" in
+        *'='*) long_opt_conjoined=1
+            long_opt_key=${1%%'='*}
+            long_opt_key=${long_opt_key#'--'}
+            long_opt_value=${1#*'='} ;;
+        *) unset -v long_opt_conjoined
+            long_opt_key=${1#'--'}
+            long_opt_value=${2} ;;
+    esac
+
+    # First try to parse the option as a subcommand-specific option, then
+    # handle the general options --help, --version, and --config-file.
+    # If neither avenues succeed, output a useful error message.
+    "${subcmd_long_opt-false}" || {
+        case "${long_opt_key}" in
+            'help' | 'version') long_opt_novalue "${@}" ;;
+            'config-file') long_opt_value "${@}" ;;
+            *[!a-zA-Z0-9_-]*) invalid option "${1}" ;;
+            *) invalid unknown-option "--${long_opt_key}" ;;
+        esac
+        case "${long_opt_key}" in
+            'help') opt_help=$((${opt_help-0} + 1)) ;;
+            'version') opt_version=1 ;;
+            'config-file') opt_config_path=${long_opt_value} ;;
+        esac
+    }
+}
+
+# Sets shift_amount and checks for ill-formed cluster or missing value for
+# short options that take values.
+short_opt_value () {
+    case "${cluster}" in
+        "${short_opt}"?*) invalid cluster "-${short_opt}" "${cluster#?}" ;;
+    esac
+    [ -n "${2+n}" ] || invalid missing-value "-${short_opt}"
+    shift_amount=2
+}
+
+# Handles unexpected value error for long options that don't take values.
+long_opt_novalue () {
+    [ -z "${long_opt_conjoined+n}" ] || invalid argument-value "${1}"
+}
+
+# Sets shift_amount and checks for missing value for long options that take values.
+long_opt_value () {
+    [ -n "${long_opt_conjoined+n}" ] || {
+        [ -n "${2+n}" ] || invalid missing-value "${1}"
+        shift_amount=2
+    }
+}
+
+# Support for scoped options: options which apply to arguments or ranges of
+# arguments (which one specifically is handled by subcommand code).
+# ${1} = option variable name
+# ${2} = 'touch': add the relevant scope to the option but do not set a value
+#          * scoped opt_foo touch
+#        'set': set the option's list of values to the single value ${3}
+#          * scoped opt_foo set bar
+#        'append': append the value ${3} to the option's list of values
+#          * scoped opt_foo append bar
+#          * scoped opt_foo append baz
+#        'indices': printf space-delimited list of indices for scope ${3}'s values
+#          * for scope in ${opt_foo}; do
+#                for index in $(scoped opt_foo indices ${scope}); do
+#                    # ...
+#                done
+#            done
+#        'length': printf number of values stored in scope ${3}
+#          * scoped opt_foo length ${scope}
+#        'copy': copy the value of scope ${3} index {4} to variable ${5}
+#          * scoped opt_foo copy ${scope} ${index} =value
+scoped () {
+    case "${2}" in
+        'touch' | 'set' | 'append')
+            copy "${1}" scoped_arg_1
+            case "${scoped_arg_1}" in
+                "${logical_index}" | *" ${logical_index}") ;;
+                *) unset -v -- "${1}__${logical_index}__len"
+                    dynamic "${1}" "${scoped_arg_1}${scoped_arg_1+' '}${logical_index}" ;;
+            esac ;;
+    esac
+    case "${2}" in
+        'set') dynamic "${1}__${logical_index}__len" 1
+            dynamic "${1}__${logical_index}__0" "${3}" ;;
+        'append') copy "${1}__${logical_index}__len" scoped_num_values 0
+            dynamic "${1}__${logical_index}__${scoped_num_values}" "${3}"
+            dynamic "${1}__${logical_index}__len" "$((scoped_num_values + 1))" ;;
+        'indices') copy "${1}__${3}__len" scoped_num_values 0
+            scoped_index_i=0
+            while [ "${scoped_index_i}" -lt "${scoped_num_values}" ]; do
+                [ "${scoped_index_i}" -gt 0 ] && printf ' '
+                printf '%s' "${scoped_index_i}"
+                scoped_index_i=$((scoped_index_i + 1))
+            done ;;
+        'length') copy "${1}__${3}__len" scoped_num_values
+            printf '%s' "${scoped_num_values}" ;;
+        'copy') case "${5}" in
+                '='?*) copy "${1}__${3}__${4}" "${5#?}" ;;
+                *) invalid 'invalid variable binding string' "${5}" ;;
+            esac ;;
+    esac
+}
+
+# Copy the value ${2} to a variable with the name of ${1}.
+# Equivalent to the following imaginary syntax:
+#  * ${1}=${2}
+dynamic () {
+    case "${1}" in
+        '' | *[!a-zA-Z0-9_]*) invalid 'attempt to dynamic bind to invalid variable' "${2}" ;;
+        *) eval "${1}"'=${2}' ;;
+    esac
+}
+
+# Copy the value ${${1}} to a variable with the name of ${2}.
+# Equivalent to the following imaginary syntax:
+#  * ${2}=${${1}}
+# The variable referenced by ${2} shall be unset if the variable referenced
+# by ${1} is unset. If a value ${3} is provided, the variable referenced by
+# ${2} shall be instead set to the value ${3} in this case.
+#  * ${2}=${3}
+copy () {
+    # Ensure we are not accidentally introducing an eval quoting bug.
+    case "${1}" in
+        '' | *[!a-zA-Z0-9_]*) invalid 'attempt to dynamic bind to invalid variable' "${1}" ;;
+    esac
+    case "${2}" in
+        '' | *[!a-zA-Z0-9_]*) invalid 'attempt to dynamic bind to invalid variable' "${2}" ;;
+    esac
+
+    if eval '[ -n "${'"${1}"'+n}" ]'; then
+        eval "${2}"'=${'"${1}"'}'
+    elif [ -n "${3+n}" ]; then
+        eval "${2}"'=${3}'
+    else
+        unset -v -- "${2}"
+    fi
+}
+
+# Take the possibly hyphenated value in ${1} and replace all the hyphens with
+# underscores, storing the result in the variable named by ${2}.
+#  * convert_dashes 'abc-xyz' =result_var
+convert_dashes () {
+    [ "${#}" -lt 2 ] && invalid 'incorrect number of arguments to convert_dashes' "${#}"
+    case "${2}" in '='?*) ;; *) invalid 'invalid variable binding string' "${2}" ;; esac
+    set -- "${1}" "${2}"
+    while true; do
+        case "${1}" in
+            *-*) set -- "${1#*-}" "${2}" "${3}${1%%-*}" ;;
+            *) set -- "${3}${1}" "${2}" && break ;;
+        esac
+    done
+    dynamic "${2#?}" "${1}"
+}
+
+# Assign the first [num] characters of [string] to result_var:
+#  * keep_first [num] [string] =result_var
+keep_first () {
+    [ "${#}" -ge 3 ] || invalid 'incorrect number of arguments to keep_first' "${#}"
+    remove_last "$((${#2} - ${1}))" "${2}" "${3}"
+}
+
+# Assign the final [num] characters of [string] to result_var:
+#  * keep_last [num] [string] =result_var
+keep_last () {
+    [ "${#}" -ge 3 ] || invalid 'incorrect number of arguments to keep_last' "${#}"
+    remove_first "$((${#2} - ${1}))" "${2}" "${3}"
+}
+
+# Assign [string] with the final [num] characters removed to result_var:
+#  * remove_first [num] [string] =result_var
+remove_first () {
+    [ "${#}" -ge 3 ] || invalid 'incorrect number of arguments to remove_first' "${#}"
+    [ "${1}" -ge 0 ] || set -- 0 "${2}" "${3}"
+    [ "${1}" -ge "${#2}" ] && set -- 0 '' "${3}"
+    case "${3}" in '='?*) ;; *) invalid 'invalid variable binding string' "${3}" ;; esac
+    while [ "${1}" -ge 16 ]; do
+        set -- "$((${1} - 16))" "${2#????????????????}" "${3}"
+    done
+    while [ "${1}" -ge 4 ]; do
+        set -- "$((${1} - 4))" "${2#????}" "${3}"
+    done
+    while [ "${1}" -gt 0 ]; do
+        set -- "$((${1} - 1))" "${2#?}" "${3}"
+    done
+    dynamic "${3#?}" "${2}"
+}
+
+# Assign [string] with the first [num] characters removed to result_var:
+#  * remove_last [num] [string] =result_var
+remove_last () {
+    [ "${#}" -ge 3 ] || invalid 'incorrect number of arguments to remove_first' "${#}"
+    [ "${1}" -ge 0 ] || set -- 0 "${2}" "${3}"
+    [ "${1}" -ge "${#2}" ] && set -- 0 '' "${3}"
+    case "${3}" in '='?*) ;; *) invalid 'invalid variable binding string' "${3}" ;; esac
+    while [ "${1}" -ge 16 ]; do
+        set -- "$((${1} - 16))" "${2%????????????????}" "${3}"
+    done
+    while [ "${1}" -ge 4 ]; do
+        set -- "$((${1} - 4))" "${2%????}" "${3}"
+    done
+    while [ "${1}" -gt 0 ]; do
+        set -- "$((${1} - 1))" "${2%?}" "${3}"
+    done
+    dynamic "${3#?}" "${2}"
+}
+
+main "${@}"

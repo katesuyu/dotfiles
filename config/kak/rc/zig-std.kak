@@ -7,7 +7,7 @@ zig-std -docstring %{
     evaluate-commands %sh{
         case "${#}" in
             0) printf "zig-std 'std.zig'\n" ;;
-            1) cd "${HOME}/.local/zig/lib/zig/std" || exit 1
+            1) cd "${HOME}/.local/lib/zig/std" || exit 1
                L=$({ realpath -e -- "${1}" || exit; } | head -c -1; printf '.') || exit 1
                printf "edit -existing '"
                printf "%s" "${L%?}" | sed "s/'/''/g"
@@ -25,7 +25,7 @@ define-command -hidden -params 0..1 zig-std-prompt %{
     }
     evaluate-commands -save-regs 'D' %{
         set-register D %sh{realpath -s .}
-        change-directory %sh{printf '%s' "${HOME}/.local/zig/lib/zig/std"}
+        change-directory %sh{printf '%s' "${HOME}/.local/lib/zig/std"}
         prompt -file-completion -on-abort %sh{
             [ "${1}" = 'true' ] && \
                 printf 'quit 0\n' && exit

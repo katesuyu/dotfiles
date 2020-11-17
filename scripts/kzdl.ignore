@@ -14,46 +14,61 @@ exec 9<>/dev/null
 # `exename` is used to behave differently depending on how we are symlinked.
 # `exepath` is printed in usage text and mimics other CLIs' output text.
 exename=${0##*'/'}
-exepath=$(command -v -- "${exename}" && printf 'n') && [ "${exepath%?}" = "${0}" ]
-if [ "${?}" -eq 0 ]; then
-    exepath=${exename}
+if exepath=$(command -v -- "${exename}" && printf 'n'); then
+    [ "${exepath%?}" = "${0}" ] && exepath=${exename}
 else
     exepath=${0}
 fi
 exename=${exename%'.sh'}
 
-# Handle invocation with zero arguments as well as --version.
-case "${exename}${1+' '}${1-}${2+' '}" in
-    'kzdl')
-        printf 'Usage: %s [command] [options]\n%s\n' "${exepath}" \
-            "See \`${exepath} --help\` for detailed usage information" >&2
-        exit 1 ;;
-    'kzdl --version' | 'kzdl -V')
-        printf '%s\n' "${ver}"
-        exit ;;
-esac
+# Takes a series of argument pairs:
+#   ${1} = command to check existence of
+#   ${2} = why missing command is required
+require_dep () {
+    [ "$((${#} % 2))" -eq 1 ] && {
+        printf 'kzdl internal bug: odd number of arguments to require_dep\n' >&2
+        exit 1
+    }
+    unset -v message
+    while [ "${#}" -gt 0 ]; do
+        type "${1}" >&9 || message="${message-}  ${1} - ${2}
+";      shift 2
+    done
+    [ -z "${message+n}" ] || {
+        printf 'kzdl: Mising dependencies: \n%s' "${message}" >&2
+        return 1
+    }
+}
 
 # Check for required dependencies; print error if any are missing.
 type jq cat mktemp mkfifo rm >&9 || {
-    message='kzdl: Missing dependencies:'
-    for dep in \
-        'jq - used for manipulating data and config' \
-        'cat - required for piping file contents' \
-        'mktemp - required to store temporary files' \
-        'mkfifo - required to create named pipes' \
-        'rm - required to clean up temporary state'
-    do
-        type "${dep%%' - '*}" >&9 && continue
-        message=$(printf '%s\n  %s' "${message}" "${dep}")
-    done
-    printf '%s\n' "${message}" >&2
-    exit 1
+    # If we're invoked normally, at the very least implement the two most basic
+    # CLI functions: non-argument usage text and --version.
+    [ "${exename}" = 'kzdl' ] && {
+        [ "${#}" -eq 0 ] && {
+            printf 'Usage: %s [command] [options]\n%s\n' "${exepath}" \
+                "See \`${exepath} --help\` for detailed usage information" >&2
+            exit 1
+        }
+        [ "${#}" -eq 1 ] && [ "${1}" = '--version' -o "${1}" = '-V' ] && {
+            printf '%s\n' "${ver}"
+            exit
+        }
+    }
+    # Outside of the above simple cases, print a useful dependency error.
+    require_dep \
+        'jq' 'most of kzdl is written in jq' \
+        'cat' 'required for piping file contents' \
+        'mktemp' 'required to store named pipes' \
+        'mkfifo' 'required to create named pipes' \
+        'rm' 'required to clean up temporary state' \
+    || exit
 }
 
 # Set up our temporary environment and jq communication pipes.
 set -e
-trap 'exec 3<&-; wait; rm -rf -- "${tmpdir}"; exit 130' INT
-trap 'exec 3<&-; wait; rm -rf -- "${tmpdir}"; exit 143' TERM
+trap 'exec 3<&-; kill %2 2>&9; wait; rm -rf -- "${tmpdir}"; exit 130' INT
+trap 'exec 3<&-; kill %2 2>&9; wait; rm -rf -- "${tmpdir}"; exit 143' TERM
 tmpdir=$(mktemp -d)
 jq_stdin="${tmpdir}/jq_stdin"
 jq_stdout="${tmpdir}/jq_stdout"

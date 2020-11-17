@@ -26,7 +26,8 @@ ln_fi "${HOME}/.local/share" 'shrc'
 
 # Link personal scripts to make available in PATH.
 for file in 'scripts/'*; do
-    [ -e "${file}" ] && ln_fi "${HOME}/.local/bin" "${file}"
+    [ -e "${file}" ] && [ -n "${file%%*'.ignore'}" ] && \
+        ln_fi "${HOME}/.local/bin" "${file}"
 done
 
 # Link kakrc and its sub-files.
