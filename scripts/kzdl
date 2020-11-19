@@ -72,10 +72,19 @@ jq -Rr -L "${tmpdir}" --unbuffered \
     include "zzz";
 
     { args: $ARGS.positional } |
+    .system = {os: null, arch: null, double: null} |
 
     # Run the requested filter only for non-string inputs.
     def N(f):
         strings // f;
+
+    # Exit immediately with an error condition.
+    def err:
+        "exec 3<&-; status=1", ("\(.)\n" | halt_error(1));
+
+    # Wrap the filter `f` that calls `error` to work as if it instead used `err`.
+    def err(f):
+        try f catch err;
 
     # Read an input, halting with an error if this is not possible.
     def try_input:
@@ -150,14 +159,18 @@ jq -Rr -L "${tmpdir}" --unbuffered \
 
     # Store the current OS and architecture in `.system`.
     def get_system:
-        require_cmd("uname") | N(
-            if .exists then
-                cmd_output("uname")
-                | N(
-                    def case($a; f):
-                        select(startswith($a))|$a|f;
-                    .system = {
-                        os: first(
+        if .system.os then
+            .
+        elif env.KZDL_OS then
+            .system.os = env.KZDL_OS
+        else
+            require_cmd("uname") | N(
+                if .exists then
+                    cmd_output("uname")
+                    | N(
+                        def case($a; f):
+                            select(startswith($a))|$a|f;
+                        .system.os = first(
                             .output[:-1] |
                             case("Linux", "Windows", "NetBSD", "FreeBSD", "OpenBSD"; ascii_downcase),
                             case("MSYS", "MINGW", "CYGWIN"; "windows"),
@@ -165,35 +178,129 @@ jq -Rr -L "${tmpdir}" --unbuffered \
                             case("SunOS"; "solaris"),
                             null
                         )
-                    }
-                )
-                | N(cmd_output("uname -m"))
-                | N(
-                    def case($a; f):
-                        select(test($a; "i"))|f;
-                    .system.arch = first(
-                        .output[:-1] |
-                        case("^(?:x86_64|amd64)$"; "x86_64"),
-                        case("^(?:x86|i386|i686|i86pc)$"; "i386"),
-                        case("^(?:aarch64|riscv64|sparc(?:v9)?)$"; ascii_downcase),
-                        case("^armv6"; "armv6kz"),
-                        case("^armv7"; "armv7a"),
-                        case("^sparc64$"; "sparcv9"),
-                        case("^sun4u$"; "sparc"),
-                        null
                     )
-                )
-                | N(.system |= (.double = "\(.arch)-\(.os)"))
+                else . end
+            )
+        end | N(
+            if .system.arch then
+                .
+            elif env.KZDL_ARCH then
+                .system.arch = env.KZDL_ARCH
             else
-                .system = {os: null, arch: null, double: null}
+                require_cmd("uname") | N(
+                    if .exists then
+                        cmd_output("uname -m")
+                        | N(
+                            def case($a; f):
+                                select(test($a; "i"))|f;
+                            .system.arch = first(
+                                .output[:-1] |
+                                case("^(?:x86_64|amd64)$"; "x86_64"),
+                                case("^(?:x86|i386|i686|i86pc)$"; "i386"),
+                                case("^(?:aarch64|riscv64|sparc(?:v9)?)$"; ascii_downcase),
+                                case("^armv6"; "armv6kz"),
+                                case("^armv7"; "armv7a"),
+                                case("^sparc64$"; "sparcv9"),
+                                case("^sun4u$"; "sparc"),
+                                null
+                            )
+                        )
+                    else . end
+                )
             end
+        ) | N(
+            if .system.os and .system.arch then
+                .system.double //= (.system|"\(.os)-\(.arch)")
+            else . end
         );
+
+    # Load config based on environment variable or system-based default locations.
+    def load_config:
+        # Attempt to read a config file, setting `.config` if it exists and
+        # was parsed, or raising an error if there was an error while reading
+        # or parsing the config file.
+        def try_config($file):
+            @sh "
+                if [ -e \($file) ]; then
+                    printf \("true\\n")
+                else
+                    printf \("false\\n")
+                fi >&3
+            ", (
+                if (try_input|fromjson) then
+                    cmd_output(@sh "cat <\($file)") | N(
+                        if .status == 0 then
+                            err(.config = (.output | parse_zzz($file)))
+                        else
+                            "error: failed to read \($file)" | err
+                        end
+                    )
+                else . end
+            );
+
+        if env.KZDL_CONFIG then
+            # Configuration in an environment variable rather than a file.
+            err(.config = (env.KZDL_CONFIG | parse_zzz))
+        elif env.KZDL_CONFIG_FILE then
+            # The user requests kzdl to load configuration from this specific file.
+            try_config(env.KZDL_CONFIG_FILE) | N(
+                if (.config|not) then
+                    "error: \(env.KZDL_CONFIG_FILE) does not exist" | err
+                else . end
+            )
+        else
+            # Try to use XDG standard to find config file.
+            get_system | N(
+                if env.XDG_CONFIG_HOME then
+                    try_config("\(env.XDG_CONFIG_HOME)/kzdl/config.zzz") | N(
+                        if (.config|not) then
+                            try_config("\(env.XDG_CONFIG_HOME)/kzdl.zzz")
+                        else . end
+                    )
+                else . end
+            ) | N(
+                # Try to find config file in APPDATA if on Windows or unknown system.
+                if (.config|not) and env.APPDATA and (.system.os // "windows") == "windows" then
+                    try_config("\(env.APPDATA)/kzdl/config.zzz") | N(
+                        if .config then
+                            .system.os = "windows"
+                        else
+                            try_config("\(env.APPDATA)/kzdl.zzz") | N(
+                                if .config then
+                                    .system.os = "windows"
+                                else . end
+                            )
+                        end
+                    )
+                else . end
+            ) | N(
+                # Try to find config file in Application Support on macOS.
+                if (.config|not) and .system.os == "macos" and env.HOME then
+                    "\(env.HOME)/Library/Application Support" as $appdata |
+                    try_config("\($appdata)/kzdl/config.zzz") | N(
+                        if (.config|not) then
+                            try_config("\($appdata)/kzdl.zzz")
+                        else . end
+                    )
+                else . end
+            ) | N(
+                # Try to find config file in ~/.config as a last resort.
+                if (.config|not) and env.HOME then
+                    try_config("\(env.HOME)/.config/kzdl/config.zzz") | N(
+                        if (.config|not) then
+                            try_config("\(env.HOME)/.config/kzdl.zzz")
+                        else . end
+                    )
+                else . end
+            )
+        end;
 
     # Script entry point; current just a testbed for the above functions.
     def main:
-        get_system | N(prompt_user) | N(
+        load_config | N(get_system) | N(prompt_user) | N(
             if .confirm then
-                @sh "printf \("Your system is: %s\\n") \(.system.double) >&2"
+                @sh "printf \("Your system is: %s\\n") \(.system.double) >&2",
+                @sh "printf \("%s\\n") \(.config|tojson) >&2"
             else
                 @sh "printf \("Canceled!\\n") >&2"
             end
@@ -225,7 +332,7 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
     def zget(ztree; $zpath):
         ztree | zget($zpath);
 
-    # Given a ztree as input, return the number of children it has.
+    # Given a ztree as input, return the number of children the provided zpath has.
     def zlen($zpath):
         zget($zpath).children | length;
     def zlen(ztree; $zpath):
@@ -275,15 +382,22 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
 
         # Print an error with the given message and line/column information.
         . as $buf |
-        def zerr($msg):
+        def zerr($msg; $start; $end_):
+            (($end_ - $start + 1) * "^") as $span |
+            (($start - 1) * " ") as $pad          |
             error(
-                "\($filename):\(.line):\(.col): error: \($msg)\n" +
-                first($buf[(.index - .col + 1):]|splits("\\n")) + "\n \(" " * .col)^"
+                "\($filename):\(.line):\($start): error: \($msg)\n" +
+                first($buf[(.index - .col + 1):]|splits("\\n")) + "\n\($pad + $span)"
             );
+        def zerr($msg; $start):
+            zerr($msg; $start; .col);
+        def zerr($msg):
+            zerr($msg; .col);
 
         # Define functions for each state transition.
         def open_line:
-            .state = $open_line | .indent = 0;
+            .state = $open_line
+            | .indent = 0;
         def open_indent:
             .state = $open_indent;
         def read_token:
@@ -291,26 +405,34 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
         def open_comment:
             .state = $comment;
         def open_multiline:
-            .state = $open_multiline | .extend = 0 | .nest = 0;
+            .state = $open_multiline
+            | .extend = 0
+            | .nest = 0;
         def multiline_start:
             .state = $multiline_start;
         def multiline_text:
             .state = $multiline_text;
         def nest_multiline:
-            .state = $nest_multiline | .count = 0;
+            .state = $nest_multiline
+            | .count = 0;
         def close_multiline:
-            .state = $close_multiline | .count = 0;
+            .state = $close_multiline
+            | .count = 0;
         def open_string:
-            .state = $string_quote | .start = .index + 1;
+            .state = $string_quote
+            | .start = .index + 1;
         def open_literal:
-            .state = $open_literal | .start = .index | .trailing = 0;
+            .state = $open_literal
+            | .start = .index
+            | .trailing = 0;
         def end_string:
             .state = $end_string;
         def traverse_child:
             .state = $traverse_child;
         def traverse_parent:
-            select(.path | length > 1) // zerr("cannot select parent of root") |
-            .state = $traverse_parent | .path |= .[:-1];
+            select(.path | length > 1) // zerr("cannot select parent of root")
+            | .state = $traverse_parent
+            | .path |= .[:-1];
         def traverse_sibling:
             .state = $traverse_sibling;
 
@@ -336,12 +458,12 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
                 if .state == $open_line then
                     if $char == $whitespace then
                         open_indent
-                    elif ($endline|any(. == $char)) then
-                        read_token
                     elif ($invalid|any(. == $char)) then
                         zerr("invalid whitespace")
                     elif .indent > (.root|length) then
-                        zerr("too much indentation")
+                        zerr("too much indentation"; 1; .col - 1)
+                    elif ($endline|any(. == $char)) then
+                        open_line
                     elif $char == $comment then
                         .root = .root[:.indent]
                         | open_comment
@@ -360,8 +482,10 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
                 elif .state == $open_indent then
                     if $char == $whitespace then
                         .indent += 1 | .state = $open_line
+                    elif .indent >= (.root|length) then
+                        zerr("too much indentation"; 1; .col - 1)
                     else
-                        zerr("odd number of spaces")
+                        zerr("odd number of spaces"; 1; .col - 1)
                     end
                 elif .state == $read_token then
                     if ($invalid|any(. == $char)) then
