@@ -22,19 +22,19 @@ else
 fi
 exename=${exename%'.sh'}
 
-# Handle invocation with zero arguments as well as --version.
-case "${exename}${1+' '}${1-}${2+' '}" in
-    'kzdl')
-        printf 'Usage: %s [command] [options]\n%s\n' "${exepath}" \
-            "See \`${exepath} --help\` for detailed usage information" >&2
-        exit 1 ;;
-    'kzdl --version' | 'kzdl -V')
-        printf '%s\n' "${ver}"
-        exit ;;
-esac
-
 # Check for required dependencies; print error if any are missing.
 type jq cat mktemp mkfifo rm >&9 || {
+    [ "${exename}" = 'kzdl' ] && {
+        [ "${#}" -eq 0 ] && {
+            printf 'Usage: %s [command] [options]\n%s\n' "${exepath}" \
+                "See \`${exepath} --help\` for detailed usage information" >&2
+            exit 1
+        }
+        [ "${#}" -eq 1 ] && case "${1}" in
+            '--version' | '-V') printf '%s\n' "${ver}"; exit ;;
+        esac
+    }
+
     message='kzdl: Missing dependencies:'
     for dep in \
         'jq - used for manipulating data and config' \
@@ -59,295 +59,7 @@ jq_stdin="${tmpdir}/jq_stdin"
 jq_stdout="${tmpdir}/jq_stdout"
 mkfifo -- "${jq_stdin}" "${jq_stdout}"
 
-# zzz parsing library (so we can read user config file).
-cat <<'EOF' >"${tmpdir}/zzz.jq"
-    # Given a ztree as input, return the value at $zpath.
-    def zget($zpath):
-        objects // error("zzz parser bug: ztree is not object")
-        | getpath($zpath|map("children", .));
-    def zget(ztree; $zpath):
-        ztree | zget($zpath);
-
-    # Given a ztree as input, return the number of children it has.
-    def zlen($zpath):
-        zget($zpath).children | length;
-    def zlen(ztree; $zpath):
-        ztree | zlen($zpath);
-
-    # Given a ztree as input, set the value at the provided zpath.
-    def zset($zpath; $value):
-        ($zpath|map("children", .)) as $zpath
-        | setpath($zpath;
-            getpath($zpath)
-            | .value = $value
-            | .children //= []
-        );
-    def zset(ztree; $zpath; $value):
-        ztree |= zset($zpath; $value);
-
-    # Parse the input zzz data into a tree of strings.
-    def parse_zzz($filename):
-        "#[=]:;, \"\n\t\r" as $special      |
-        ($special|explode) as $special      |
-        $special[0] as $comment             |
-        $special[1] as $open_multiline      |
-        $special[2] as $extend_multiline    |
-        $special[3] as $close_multiline     |
-        $special[4] as $traverse_child      |
-        $special[5] as $traverse_parent     |
-        $special[6] as $traverse_sibling    |
-        $special[7] as $whitespace          |
-        $special[8] as $string_quote        |
-        $special[9] as $newline             |
-        $special[10:] as $invalid           |
-        $special[4:7] as $traverse          |
-        [$special[9],"EOF"] as $endline     |
-        ($traverse+$endline) as $endtoken   |
-        ($endtoken+[$comment]) as $endtoken |
-
-        # Print an error with the given message and line/column information.
-        . as $buf |
-        def zerr($msg):
-            error(
-                "\n  \($filename):\(.line):\(.col): error: \($msg)\n  " +
-                first($buf[(.index - .col + 1):]|splits("\\n")) + "\n \(" " * .col)^"
-            );
-
-        # Parse the zzz file as a stream of codepoints.
-        reduce (explode[], "EOF") as $char (
-            {
-                # The tree of nodes, eventually extracted as the final result.
-                tree: {value: null, children: []},
-                # The zpath of the node we're currently working with.
-                path: [],
-                # The zpath to the root of the previous line.
-                root: [],
-                # The current state of the parser (defaults to start of line).
-                state: "open_line",
-                # How deep into the tree we are indentation-wise.
-                indent: 0,
-                # The current byte index into the buffer.
-                index: 0,
-                # The current line and column numbers.
-                line: 1, col: 1,
-            };
-            def parse:
-                def open_line:
-                    .state = "open_line" | .indent = 0;
-                def open_indent:
-                    .state = "open_indent";
-                def read_token:
-                    .state = "read_token";
-                def open_comment:
-                    .state = "open_comment";
-                def open_multiline:
-                    .state = "open_multiline" | .extend = 0 | .nest = 0;
-                def multiline_start:
-                    .state = "multiline_start";
-                def multiline_text:
-                    .state = "multiline_text";
-                def nest_multiline:
-                    .state = "nest_multiline" | .count = 0;
-                def close_multiline:
-                    .state = "close_multiline" | .count = 0;
-                def open_string:
-                    .state = "open_string" | .start = .index + 1;
-                def open_literal:
-                    .state = "open_literal" | .start = .index | .trailing = 0;
-                def end_string:
-                    .state = "end_string";
-                def traverse_child:
-                    .state = "traverse_child";
-                def traverse_parent:
-                    select(.path | length > 1) // zerr("cannot select parent of root") |
-                    .state = "traverse_parent" | .path |= .[:-1];
-                def traverse_sibling:
-                    .state = "traverse_sibling";
-
-                if .state == "open_line" then
-                    if $char == $whitespace then
-                        open_indent
-                    elif ($endline|any(. == $char)) then
-                        open_line
-                    elif ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif .indent > (.root|length) then
-                        zerr("too much indentation")
-                    elif $char == $comment then
-                        .root = .root[:.indent]
-                        | open_comment
-                    elif $char == $traverse_parent then
-                        .root = .root[:.indent]
-                        | .path = .root
-                        | traverse_parent
-                    else
-                        .root = .root[:.indent]
-                        | .root += [zlen(.tree; .root)]
-                        | zset(.tree; .root; null)
-                        | .path = .root
-                        | read_token
-                        | parse
-                    end
-                elif .state == "open_indent" then
-                    if $char == $whitespace then
-                        .indent += 1 | .state = "open_line"
-                    else
-                        zerr("odd number of spaces")
-                    end
-                elif .state == "read_token" then
-                    if ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif ($endline|any(. == $char)) then
-                        open_line
-                    elif $char == $traverse_child then
-                        traverse_child
-                    elif $char == $traverse_parent then
-                        traverse_parent
-                    elif $char == $traverse_sibling then
-                        traverse_sibling
-                    elif $char == $open_multiline then
-                        open_multiline
-                    elif $char == $string_quote then
-                        open_string
-                    elif $char == $comment then
-                        open_comment
-                    else
-                        open_literal
-                    end
-                elif .state == "open_comment" then
-                    if $char == $newline then
-                        open_line
-                    else . end
-                elif .state == "open_multiline" then
-                    if $char == $extend_multiline then
-                        .extend += 1
-                    elif $char == $open_multiline then
-                        multiline_start
-                    elif $char == "EOF" then
-                        zerr("unexpected end of file in multiline literal")
-                    elif $char == $newline then
-                        zerr("unexpected newline in multiline delimiter")
-                    else
-                        zerr("unexpected character in multiline delimiter")
-                    end
-                elif .state == "multiline_start" then
-                    multiline_text |
-                    if $char == $newline then
-                        .start = .index + 1
-                    else
-                        .start = .index | parse
-                    end
-                elif .state == "multiline_text" then
-                    if $char == $open_multiline then
-                        nest_multiline
-                    elif $char == $close_multiline then
-                        close_multiline
-                    elif $char == "EOF" then
-                        zerr("unexpected end of file in multiline literal")
-                    else . end
-                elif .state == "nest_multiline" then
-                    if $char == $extend_multiline then
-                        .count += 1
-                    elif ($char == $open_multiline and .count == .extend) then
-                        .nest += 1 | multiline_text
-                    else
-                        multiline_text | parse
-                    end
-                elif .state == "close_multiline" then
-                    if $char == $extend_multiline then
-                        .count += 1
-                    elif ($char == $close_multiline and .count == .extend) then
-                        if .nest == 0 then
-                            zset(.tree; .path; $buf[.start:(.index - .extend - 1)]) | end_string
-                        else
-                            .nest -= 1 | multiline_text
-                        end
-                    else
-                        multiline_text | parse
-                    end
-                elif .state == "open_string" then
-                    if $char == $string_quote then
-                        zset(.tree; .path; $buf[.start:.index]) | end_string
-                    elif $char == $newline then
-                        zerr("unexpected newline in quoted string")
-                    elif $char == "EOF" then
-                        zerr("unexpected end of file in quoted string")
-                    else . end
-                elif .state == "open_literal" then
-                    if $char == $whitespace then
-                        .trailing += 1
-                    elif ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif ($endtoken|any(. == $char)) then
-                        zset(.tree; .path; $buf[.start:(.index - .trailing)])
-                        | read_token
-                        | parse
-                    else
-                        .trailing = 0
-                    end
-                elif .state == "end_string" then
-                    if ($endtoken|any(. == $char)) then
-                        read_token | parse
-                    elif ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif $char != $whitespace then
-                        zerr("unexpected character after string")
-                    else . end
-                elif .state == "traverse_child" then
-                    if ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif ($endline|any(. == $char)) then
-                        open_line
-                    elif $char == $comment then
-                        open_comment
-                    elif $char != $whitespace then
-                        .path += [zlen(.tree; .path)]
-                        | zset(.tree; .path; null)
-                        | read_token
-                        | parse
-                    else . end
-                elif .state == "traverse_parent" then
-                    if ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif ($endline|any(. == $char)) then
-                        open_line
-                    elif $char == $comment then
-                        open_comment
-                    elif $char == $traverse_parent then
-                        traverse_parent
-                    elif $char != $whitespace then
-                        .path[-1] += 1
-                        | zset(.tree; .path; null)
-                        | read_token
-                        | parse
-                    else . end
-                elif .state == "traverse_sibling" then
-                    if ($invalid|any(. == $char)) then
-                        zerr("invalid whitespace")
-                    elif ($endline|any(. == $char)) then
-                        open_line
-                    elif $char == $comment then
-                        open_comment
-                    elif $char != $whitespace then
-                        .path[-1] += 1
-                        | zset(.tree; .path; null)
-                        | read_token
-                        | parse
-                    else . end
-                else
-                    zerr("zzz parser bug: unknown state \(.state)")
-                end;
-            parse | .index += 1 |
-            if $char == $newline then
-                .line += 1 | .col = 1
-            else
-                .col += 1
-            end
-        ) | .tree;
-    def parse_zzz:
-        parse_zzz("<unknown>");
-EOF
-
+main () {
 # Start jq background process, allowing it to drive further execution.
 jq -Rr -L "${tmpdir}" --unbuffered \
     --from-file /dev/fd/3 \
@@ -357,7 +69,7 @@ jq -Rr -L "${tmpdir}" --unbuffered \
     --arg ver "${ver}" \
     --args -- "${@}" \
     <"${jq_stdin}" >"${jq_stdout}" 3<<'JQ_SCRIPT' &
-    import "zzz" as ZZZ;
+    include "zzz";
 
     { args: $ARGS.positional } |
 
@@ -486,6 +198,7 @@ jq -Rr -L "${tmpdir}" --unbuffered \
                 @sh "printf \("Canceled!\\n") >&2"
             end
         );
+
     main, "exec 3<&-" | printf | join(" ")
 JQ_SCRIPT
 exec 3>"${jq_stdin}"
@@ -501,3 +214,306 @@ done 7<&0 <"${jq_stdout}"
 # Clean up temporary directory and exit as appropriate.
 rm -rf -- "${tmpdir}"
 exit "${status}"
+}
+
+# zzz parsing library (so we can read user config file).
+cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
+    # Given a ztree as input, return the value at $zpath.
+    def zget($zpath):
+        objects // error("zzz parser bug: ztree is not object")
+        | getpath($zpath|map("children", .));
+    def zget(ztree; $zpath):
+        ztree | zget($zpath);
+
+    # Given a ztree as input, return the number of children it has.
+    def zlen($zpath):
+        zget($zpath).children | length;
+    def zlen(ztree; $zpath):
+        ztree | zlen($zpath);
+
+    # Given a ztree as input, set the value at the provided zpath.
+    def zset($zpath; $value):
+        ($zpath|map("children", .)) as $zpath
+        | setpath($zpath;
+            getpath($zpath)
+            | .value = $value
+            | .children //= []
+        );
+    def zset(ztree; $zpath; $value):
+        ztree |= zset($zpath; $value);
+
+    # Parse the input zzz data into a tree of strings.
+    def parse_zzz($filename):
+        # Define variables for each special codepoint.
+        "#[=]:;, \"\n\t\r" as $special      |
+        ($special|explode) as $special      |
+        $special[0] as $comment             |
+        $special[1] as $open_multiline      |
+        $special[2] as $extend_multiline    |
+        $special[3] as $close_multiline     |
+        $special[4] as $traverse_child      |
+        $special[5] as $traverse_parent     |
+        $special[6] as $traverse_sibling    |
+        $special[7] as $whitespace          |
+        $special[8] as $string_quote        |
+        $special[9] as $newline             |
+        $special[10:] as $invalid           |
+        $special[4:7] as $traverse          |
+        [$special[9],"EOF"] as $endline     |
+        ($traverse+$endline) as $endtoken   |
+        ($endtoken+[$comment]) as $endtoken |
+
+        # Define variables for each state that doesn't have a codepoint.
+        ($special|max+1) as $open_line     |
+        ($open_line+1) as $open_indent     |
+        ($open_line+2) as $read_token      |
+        ($open_line+3) as $multiline_start |
+        ($open_line+4) as $multiline_text  |
+        ($open_line+5) as $nest_multiline  |
+        ($open_line+6) as $open_literal    |
+        ($open_line+7) as $end_string      |
+
+        # Print an error with the given message and line/column information.
+        . as $buf |
+        def zerr($msg):
+            error(
+                "\($filename):\(.line):\(.col): error: \($msg)\n" +
+                first($buf[(.index - .col + 1):]|splits("\\n")) + "\n \(" " * .col)^"
+            );
+
+        # Define functions for each state transition.
+        def open_line:
+            .state = $open_line | .indent = 0;
+        def open_indent:
+            .state = $open_indent;
+        def read_token:
+            .state = $read_token;
+        def open_comment:
+            .state = $comment;
+        def open_multiline:
+            .state = $open_multiline | .extend = 0 | .nest = 0;
+        def multiline_start:
+            .state = $multiline_start;
+        def multiline_text:
+            .state = $multiline_text;
+        def nest_multiline:
+            .state = $nest_multiline | .count = 0;
+        def close_multiline:
+            .state = $close_multiline | .count = 0;
+        def open_string:
+            .state = $string_quote | .start = .index + 1;
+        def open_literal:
+            .state = $open_literal | .start = .index | .trailing = 0;
+        def end_string:
+            .state = $end_string;
+        def traverse_child:
+            .state = $traverse_child;
+        def traverse_parent:
+            select(.path | length > 1) // zerr("cannot select parent of root") |
+            .state = $traverse_parent | .path |= .[:-1];
+        def traverse_sibling:
+            .state = $traverse_sibling;
+
+        # Parse the zzz file as a stream of codepoints.
+        reduce (explode[], "EOF") as $char (
+            {
+                # The tree of nodes, eventually extracted as the final result.
+                tree: {value: null, children: []},
+                # The zpath of the node we're currently working with.
+                path: [],
+                # The zpath to the root of the previous line.
+                root: [],
+                # The current state of the parser (defaults to start of line).
+                state: $open_line,
+                # How deep into the tree we are indentation-wise.
+                indent: 0,
+                # The current byte index into the buffer.
+                index: 0,
+                # The current line and column numbers.
+                line: 1, col: 1,
+            };
+            def parse:
+                if .state == $open_line then
+                    if $char == $whitespace then
+                        open_indent
+                    elif ($endline|any(. == $char)) then
+                        read_token
+                    elif ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif .indent > (.root|length) then
+                        zerr("too much indentation")
+                    elif $char == $comment then
+                        .root = .root[:.indent]
+                        | open_comment
+                    elif $char == $traverse_parent then
+                        .root = .root[:.indent]
+                        | .path = .root
+                        | traverse_parent
+                    else
+                        .root = .root[:.indent]
+                        | .root += [zlen(.tree; .root)]
+                        | zset(.tree; .root; null)
+                        | .path = .root
+                        | read_token
+                        | parse
+                    end
+                elif .state == $open_indent then
+                    if $char == $whitespace then
+                        .indent += 1 | .state = $open_line
+                    else
+                        zerr("odd number of spaces")
+                    end
+                elif .state == $read_token then
+                    if ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif ($endline|any(. == $char)) then
+                        open_line
+                    elif $char == $traverse_child then
+                        traverse_child
+                    elif $char == $traverse_parent then
+                        traverse_parent
+                    elif $char == $traverse_sibling then
+                        traverse_sibling
+                    elif $char == $open_multiline then
+                        open_multiline
+                    elif $char == $string_quote then
+                        open_string
+                    elif $char == $comment then
+                        open_comment
+                    else
+                        open_literal
+                    end
+                elif .state == $comment then
+                    if $char == $newline then
+                        open_line
+                    else . end
+                elif .state == $open_multiline then
+                    if $char == $extend_multiline then
+                        .extend += 1
+                    elif $char == $open_multiline then
+                        multiline_start
+                    elif $char == "EOF" then
+                        zerr("unexpected end of file in multiline literal")
+                    elif $char == $newline then
+                        zerr("unexpected newline in multiline delimiter")
+                    else
+                        zerr("unexpected character in multiline delimiter")
+                    end
+                elif .state == $multiline_start then
+                    multiline_text |
+                    if $char == $newline then
+                        .start = .index + 1
+                    else
+                        .start = .index | parse
+                    end
+                elif .state == $multiline_text then
+                    if $char == $open_multiline then
+                        nest_multiline
+                    elif $char == $close_multiline then
+                        close_multiline
+                    elif $char == "EOF" then
+                        zerr("unexpected end of file in multiline literal")
+                    else . end
+                elif .state == $nest_multiline then
+                    if $char == $extend_multiline then
+                        .count += 1
+                    elif ($char == $open_multiline and .count == .extend) then
+                        .nest += 1 | multiline_text
+                    else
+                        multiline_text | parse
+                    end
+                elif .state == $close_multiline then
+                    if $char == $extend_multiline then
+                        .count += 1
+                    elif ($char == $close_multiline and .count == .extend) then
+                        if .nest == 0 then
+                            zset(.tree; .path; $buf[.start:(.index - .extend - 1)]) | end_string
+                        else
+                            .nest -= 1 | multiline_text
+                        end
+                    else
+                        multiline_text | parse
+                    end
+                elif .state == $string_quote then
+                    if $char == $string_quote then
+                        zset(.tree; .path; $buf[.start:.index]) | end_string
+                    elif $char == $newline then
+                        zerr("unexpected newline in quoted string")
+                    elif $char == "EOF" then
+                        zerr("unexpected end of file in quoted string")
+                    else . end
+                elif .state == $open_literal then
+                    if $char == $whitespace then
+                        .trailing += 1
+                    elif ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif ($endtoken|any(. == $char)) then
+                        zset(.tree; .path; $buf[.start:(.index - .trailing)])
+                        | read_token
+                        | parse
+                    else
+                        .trailing = 0
+                    end
+                elif .state == $end_string then
+                    if ($endtoken|any(. == $char)) then
+                        read_token | parse
+                    elif ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif $char != $whitespace then
+                        zerr("unexpected character after string")
+                    else . end
+                elif .state == $traverse_child then
+                    if ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif ($endline|any(. == $char)) then
+                        open_line
+                    elif $char == $comment then
+                        open_comment
+                    elif $char != $whitespace then
+                        .path += [zlen(.tree; .path)]
+                        | zset(.tree; .path; null)
+                        | read_token
+                        | parse
+                    else . end
+                elif .state == $traverse_parent then
+                    if ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif ($endline|any(. == $char)) then
+                        open_line
+                    elif $char == $comment then
+                        open_comment
+                    elif $char == $traverse_parent then
+                        traverse_parent
+                    elif $char != $whitespace then
+                        .path[-1] += 1
+                        | zset(.tree; .path; null)
+                        | read_token
+                        | parse
+                    else . end
+                elif .state == $traverse_sibling then
+                    if ($invalid|any(. == $char)) then
+                        zerr("invalid whitespace")
+                    elif ($endline|any(. == $char)) then
+                        open_line
+                    elif $char == $comment then
+                        open_comment
+                    elif $char != $whitespace then
+                        .path[-1] += 1
+                        | zset(.tree; .path; null)
+                        | read_token
+                        | parse
+                    else . end
+                else
+                    zerr("zzz parser bug: unknown state \(.state)")
+                end;
+            parse | .index += 1 |
+            if $char == $newline then
+                .line += 1 | .col = 1
+            else
+                .col += 1
+            end
+        ) | .tree;
+    def parse_zzz:
+        parse_zzz("<unknown>");
+JQ_SCRIPT
+main "${@}"
