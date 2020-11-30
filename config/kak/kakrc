@@ -34,25 +34,20 @@ plug "ul/kak-lsp" do %{
                 printf '%s\n' "${2}" >"${1}"
         }
         lsp_config=$(
-            exec 3<<EOF
-tagField = "function"
-errorTag = "function"
-field = "function"
+            sed '/^\[semantic_tokens\]$/a\
+tagField = "function"\
+errorTag = "function"\
+field = "function"\
 parameter = "variable"
-EOF
-exec 4<<EOF
+                /^\[semantic_modifiers\]$/c[semantic_token_modifiers]\
 namespace = "module"
-EOF
-            exec 5<<EOF
-
-[language.zig]
-filetypes = ["zig"]
-roots = ["build.zig"]
-command = "$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g')"
-EOF
-            sed '/^\[semantic_tokens\]$/r /dev/fd/3
-                /^\[semantic_modifiers\]$/r /dev/fd/4
-                $r /dev/fd/5' <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
+                $a\
+\
+[language.zig]\
+filetypes = ["zig"]\
+roots = ["build.zig"]\
+command = """'"$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g;s/\r/\\r/g')"'"""
+            ' <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
         ) && overwrite "${kak_config}/kak-lsp.toml" "${lsp_config}"
         zls_config=$(
             zig_exe_path="${HOME}/.local/zig/zig" \
@@ -204,6 +199,11 @@ hook global WinSetOption filetype=(sh|kak) %{
     hook -once -always window WinSetOption filetype=.* %{
         unset-face variable
     }
+}
+
+# Mcmeta is just a json file with a different extension.
+hook global BufCreate .*[.]mcmeta %{
+    set-option buffer filetype json
 }
 
 # Enable line numbers and soft-wrapping.

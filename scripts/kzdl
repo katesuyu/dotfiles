@@ -52,8 +52,8 @@ type jq cat mktemp mkfifo rm >&9 || {
 
 # Set up our temporary environment and jq communication pipes.
 set -e
-trap 'exec 3<&-; wait; rm -rf -- "${tmpdir}"; exit 130' INT
-trap 'exec 3<&-; wait; rm -rf -- "${tmpdir}"; exit 143' TERM
+trap 'set +e; exec 3<&-; wait; rm -rf -- "${tmpdir}"; exit 130' INT
+trap 'set +e; exec 3<&-; wait; rm -rf -- "${tmpdir}"; exit 143' TERM
 tmpdir=$(mktemp -d)
 jq_stdin="${tmpdir}/jq_stdin"
 jq_stdout="${tmpdir}/jq_stdout"
@@ -69,11 +69,52 @@ jq -Rr -L "${tmpdir}" --unbuffered \
     --arg ver "${ver}" \
     --args -- "${@}" \
     <"${jq_stdin}" >"${jq_stdout}" 3<<'JQ_SCRIPT' &
+    include "cli";
     include "zzz";
 
     { args: $ARGS.positional } |
-    .system = {os: null, arch: null, double: null} |
+    .system = {os: env.KZDL_OS, arch: env.KZDL_ARCH, double: null} |
 
+    # Script entry point; current just a testbed for the above functions.
+    def main:
+        load_config({
+            outer_dir: "kzdl",
+            outer_file: "kzdl.zzz",
+            inner_file: "config.zzz",
+        }; env.KZDL_CONFIG_FILE; env.KZDL_CONFIG)
+        | N(err(
+            .config_file as $file | (.config|values) |= parse_zzz($file)
+        ))
+        | N(get_system)
+        | N(prompt_user)
+        | N(
+            if .confirm then
+                @sh "printf \("Your system is: %s\\n") \(.system.double) >&2",
+                @sh "printf \("%s\\n") \(.config|tojson) >&2"
+            else
+                @sh "printf \("Canceled!\\n") >&2"
+            end
+        );
+
+    main, "exec 3<&-" | printf | join(" ")
+JQ_SCRIPT
+exec 3>"${jq_stdin}"
+printf '\n' >&3
+set +e
+
+# Eval everything the jq script tells us to.
+status=0
+while IFS= read -r evalstr; do
+    eval 'eval "$(printf '"${evalstr}"')"'
+done 7<&0 <"${jq_stdout}"
+
+# Clean up temporary directory and exit as appropriate.
+rm -rf -- "${tmpdir}"
+exit "${status}"
+}
+
+# Command line utility library (argument parsing / config loading).
+cat <<'JQ_SCRIPT' >"${tmpdir}/cli.jq"
     # Run the requested filter only for non-string inputs.
     def N(f):
         strings // f;
@@ -161,8 +202,6 @@ jq -Rr -L "${tmpdir}" --unbuffered \
     def get_system:
         if .system.os then
             .
-        elif env.KZDL_OS then
-            .system.os = env.KZDL_OS
         else
             require_cmd("uname") | N(
                 if .exists then
@@ -184,8 +223,6 @@ jq -Rr -L "${tmpdir}" --unbuffered \
         end | N(
             if .system.arch then
                 .
-            elif env.KZDL_ARCH then
-                .system.arch = env.KZDL_ARCH
             else
                 require_cmd("uname") | N(
                     if .exists then
@@ -215,142 +252,89 @@ jq -Rr -L "${tmpdir}" --unbuffered \
         );
 
     # Load config based on environment variable or system-based default locations.
-    def load_config:
+    def load_config($app; $override_file; $override_contents):
         # Attempt to read a config file, setting `.config` if it exists and
         # was parsed, or raising an error if there was an error while reading
         # or parsing the config file.
-        def try_config($file):
-            @sh "
-                if [ -e \($file) ]; then
-                    printf \("true\\n")
-                else
-                    printf \("false\\n")
-                fi >&3
-            ", (
-                if (try_input|fromjson) then
-                    cmd_output(@sh "cat <\($file)") | N(
-                        if .status == 0 then
-                            err(.config = (.output | parse_zzz($file)))
-                        else
-                            "error: failed to read \($file)" | err
-                        end
-                    )
-                else . end
-            );
+        def try_config($files):
+            def try_config:
+                .config[0] as $file |
+                @sh "
+                    if [ -e \($file) ]; then
+                        printf \("true\\n")
+                    else
+                        printf \("false\\n")
+                    fi >&3
+                ", (
+                    if (try_input|fromjson) then
+                        cmd_output(@sh "cat <\($file)") | N(
+                            if .status == 0 then
+                                .config_file = $file | .config = .output
+                            else
+                                "error: failed to read \($file)" | err
+                            end
+                        )
+                    elif (.config|length > 1) then
+                        .config |= .[1:] | try_config
+                    else del(.config) end
+                );
+            .config = ($files|arrays // [.]) | try_config;
 
-        if env.KZDL_CONFIG then
+        [$app |
+            "\(.outer_dir|values)/\(.inner_file|values)", (.outer_file|values)
+        ] as $locations |
+
+        def location($path):
+            $locations | map("\($path)/\(.)");
+
+        if $override_contents then
             # Configuration in an environment variable rather than a file.
-            err(.config = (env.KZDL_CONFIG | parse_zzz))
-        elif env.KZDL_CONFIG_FILE then
-            # The user requests kzdl to load configuration from this specific file.
-            try_config(env.KZDL_CONFIG_FILE) | N(
+            .config = $override_contents
+        elif $override_file then
+            # The user requested us to load configuration from this specific file.
+            try_config($override_file) | N(
                 if (.config|not) then
-                    "error: \(env.KZDL_CONFIG_FILE) does not exist" | err
+                    "error: \($override_file) does not exist" | err
                 else . end
             )
         else
-            # Try to use XDG standard to find config file.
             get_system | N(
+                # Try to use XDG standard to find config file.
                 if env.XDG_CONFIG_HOME then
-                    try_config("\(env.XDG_CONFIG_HOME)/kzdl/config.zzz") | N(
-                        if (.config|not) then
-                            try_config("\(env.XDG_CONFIG_HOME)/kzdl.zzz")
-                        else . end
-                    )
+                    try_config(location(env.XDG_CONFIG_HOME))
                 else . end
             ) | N(
                 # Try to find config file in APPDATA if on Windows or unknown system.
                 if (.config|not) and env.APPDATA and (.system.os // "windows") == "windows" then
-                    try_config("\(env.APPDATA)/kzdl/config.zzz") | N(
+                    try_config(location(env.APPDATA)) | N(
                         if .config then
                             .system.os = "windows"
-                        else
-                            try_config("\(env.APPDATA)/kzdl.zzz") | N(
-                                if .config then
-                                    .system.os = "windows"
-                                else . end
-                            )
-                        end
+                        else . end
                     )
                 else . end
             ) | N(
                 # Try to find config file in Application Support on macOS.
                 if (.config|not) and .system.os == "macos" and env.HOME then
-                    "\(env.HOME)/Library/Application Support" as $appdata |
-                    try_config("\($appdata)/kzdl/config.zzz") | N(
-                        if (.config|not) then
-                            try_config("\($appdata)/kzdl.zzz")
-                        else . end
-                    )
+                    try_config(location("\(env.HOME)/Library/Application Support"))
                 else . end
             ) | N(
                 # Try to find config file in ~/.config as a last resort.
                 if (.config|not) and env.HOME then
-                    try_config("\(env.HOME)/.config/kzdl/config.zzz") | N(
-                        if (.config|not) then
-                            try_config("\(env.HOME)/.config/kzdl.zzz")
-                        else . end
-                    )
+                    try_config(location("\(env.HOME)/.config"))
                 else . end
             )
         end;
-
-    # Script entry point; current just a testbed for the above functions.
-    def main:
-        load_config | N(get_system) | N(prompt_user) | N(
-            if .confirm then
-                @sh "printf \("Your system is: %s\\n") \(.system.double) >&2",
-                @sh "printf \("%s\\n") \(.config|tojson) >&2"
-            else
-                @sh "printf \("Canceled!\\n") >&2"
-            end
-        );
-
-    main, "exec 3<&-" | printf | join(" ")
+    def load_config($app):
+        load_config($app; null; null);
 JQ_SCRIPT
-exec 3>"${jq_stdin}"
-printf '\n' >&3
-set +e
-
-# Eval everything the jq script tells us to.
-status=0
-while IFS= read -r evalstr; do
-    eval 'eval "$(printf '"${evalstr}"')"'
-done 7<&0 <"${jq_stdout}"
-
-# Clean up temporary directory and exit as appropriate.
-rm -rf -- "${tmpdir}"
-exit "${status}"
-}
 
 # zzz parsing library (so we can read user config file).
 cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
-    # Given a ztree as input, return the value at $zpath.
-    def zget($zpath):
-        objects // error("zzz parser bug: ztree is not object")
-        | getpath($zpath|map("children", .));
-    def zget(ztree; $zpath):
-        ztree | zget($zpath);
-
-    # Given a ztree as input, return the number of children the provided zpath has.
-    def zlen($zpath):
-        zget($zpath).children | length;
-    def zlen(ztree; $zpath):
-        ztree | zlen($zpath);
-
-    # Given a ztree as input, set the value at the provided zpath.
-    def zset($zpath; $value):
-        ($zpath|map("children", .)) as $zpath
-        | setpath($zpath;
-            getpath($zpath)
-            | .value = $value
-            | .children //= []
-        );
-    def zset(ztree; $zpath; $value):
-        ztree |= zset($zpath; $value);
-
     # Parse the input zzz data into a tree of strings.
     def parse_zzz($filename):
+        # Generate a placeholder filename if none was provided.
+        ($filename|nulls = "<unknown>") as $filename |
+
         # Define variables for each special codepoint.
         "#[=]:;, \"\n\t\r" as $special      |
         ($special|explode) as $special      |
@@ -393,6 +377,30 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
             zerr($msg; $start; .col);
         def zerr($msg):
             zerr($msg; .col);
+
+        # Given a ztree as input, return the value at $zpath.
+        def zget($zpath):
+            objects // error("zzz parser bug: ztree is not object")
+            | getpath($zpath|map("children", .));
+        def zget(ztree; $zpath):
+            ztree | zget($zpath);
+
+        # Given a ztree as input, return the number of children the provided zpath has.
+        def zlen($zpath):
+            zget($zpath).children | length;
+        def zlen(ztree; $zpath):
+            ztree | zlen($zpath);
+
+        # Given a ztree as input, set the value at the provided zpath.
+        def zset($zpath; $value):
+            ($zpath|map("children", .)) as $zpath |
+            setpath($zpath;
+                getpath($zpath)
+                | {$value, children}
+                | del(.children|nulls)
+            );
+        def zset(ztree; $zpath; $value):
+            ztree |= zset($zpath; $value);
 
         # Define functions for each state transition.
         def open_line:
@@ -440,7 +448,7 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
         reduce (explode[], "EOF") as $char (
             {
                 # The tree of nodes, eventually extracted as the final result.
-                tree: {value: null, children: []},
+                tree: {value: null},
                 # The zpath of the node we're currently working with.
                 path: [],
                 # The zpath to the root of the previous line.
@@ -638,6 +646,6 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
             end
         ) | .tree;
     def parse_zzz:
-        parse_zzz("<unknown>");
+        parse_zzz(null);
 JQ_SCRIPT
 main "${@}"

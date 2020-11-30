@@ -1,0 +1,55 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+set -Cu
+
+# Argument validation (this is an internal script so it is a bit strange).
+if [ "${#}" -lt 1 ]; then
+    printf 'internal bug: invoked without --to or --from\n' >&2
+    exit 1
+elif [ "${1}" != '--to' -a "${1}" != '--from' ]; then
+    printf 'internal bug: invoked with %s instead of --to or --from\n' "${1}" >&2
+    exit 1
+elif [ "${#}" -gt 2 ]; then
+    printf 'expected 0 or 1 arguments; found %s\n' "$((${#} - 1))" >&2
+    exit 1
+elif [ "${#}" -eq 2 ] && [ "${2}" != '--validate' ]; then
+    printf 'unexpected parameter %s\n' "${2}" >&2
+    exit 1
+elif [ "${1}" = '--to' ]; then
+    from='data.nbt'
+    to='generated/data.snbt'
+else
+    from='data.snbt'
+    to='generated/data.nbt'
+fi
+
+# Clean up on SIGINT or SIGTERM;
+cleanup () {
+    rm -rf -- "${tmpdir}" >/dev/null
+    exit "${1-'1'}"
+}
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
+
+# Store the input NBT / SNBT in a temporary environment.
+tmpdir=$(mktemp -d)      || cleanup
+cat >"${tmpdir}/${from}" || cleanup
+cd "${tmpdir}"           || cleanup
+
+# If passed --validate, pass it to `mcdata` too. Otherwise, follow the default
+# behavior of converting stdin to the requested output format.
+"${SHRC}/mcdata" --client --dev --input "${tmpdir}" --output "${tmpdir}/generated" >/dev/null
+if [ "${#}" -eq 1 ] && [ -f "${tmpdir}/${to}" ]; then
+    cat <"${tmpdir}/${to}"
+    cleanup 1
+elif [ "${#}" -eq 1 ] && [ "${1}" = "--to" ]; then
+    printf 'Input NBT could not be converted to SNBT\n' >&2
+    cleanup 1
+elif [ "${#}" -eq 1 ]; then
+    ls -l "${tmpdir}" >&2
+    printf 'Input SNBT could not be converted to NBT\n' >&2
+    cleanup 1
+elif [ ! -f "${tmpdir}/${to}" ]; then
+    cleanup 1
+fi
+cleanup 0
