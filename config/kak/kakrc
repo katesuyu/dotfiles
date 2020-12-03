@@ -74,10 +74,12 @@ command = """'"$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"
 
     # Enable Zig language server + semantic tokens.
     hook global WinSetOption filetype=(zig) %{
+        map -docstring 'format document (zls)' window user 'f' ': lsp-formatting<ret>'
         hook window -group semantic-tokens BufReload .* lsp-semantic-tokens
         hook window -group semantic-tokens NormalIdle .* lsp-semantic-tokens
         hook window -group semantic-tokens InsertIdle .* lsp-semantic-tokens
         hook -once -always window WinSetOption filetype=.* %{
+            unmap window user 'f' ': lsp-formatting<ret>'
             remove-hooks window semantic-tokens
         }
         lsp-enable-window

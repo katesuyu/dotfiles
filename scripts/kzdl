@@ -365,7 +365,7 @@ cat <<'JQ_SCRIPT' >"${tmpdir}/zzz.jq"
         ($open_line+7) as $end_string      |
 
         # Print an error with the given message and line/column information.
-        . as $buf |
+        nulls = "" | . as $buf |
         def zerr($msg; $start; $end_):
             (($end_ - $start + 1) * "^") as $span |
             (($start - 1) * " ") as $pad          |
