@@ -102,31 +102,50 @@ command = """'"$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"
 map -docstring 'comment out selected lines' global normal '#' ': comment-line<ret>'
 
 # User mappings to copy/paste with xclip.
-map -docstring 'copy selection to X clipboard' global user 'y' \
-    %[: xclip-copy-internal<ret>]
-map -docstring 'delete selection and copy to X clipboard' global user 'd' \
-    %[: xclip-copy-internal<ret><a-d>]
-map -docstring 'paste from X clipboard (append)' global user 'p' \
-    %[: xclip-paste-internal p<ret>]
-map -docstring 'paste from X clipboard (prepend)' global user 'P' \
-    %[: xclip-paste-internal P<ret>]
-map -docstring 'paste from X clipboard (replace)' global user 'R' \
-    %[: xclip-paste-internal R<ret>]
+evaluate-commands %sh{
+    if type xclip >/dev/null; then
+        copy_cmd='xclip -selection clipboard'
+        paste_cmd='xclip -o -selection clipboard'
+    elif type termux-clipboard-get >/dev/null; then
+        copy_cmd='termux-clipboard-set'
+        paste_cmd='termux-clipboard-get'
+    else
+        exit 0
+    fi
 
-define-command -hidden xclip-copy-internal \
-    %{execute-keys %[<a-|>xclip -selection clipboard <ret>]}
-
-define-command -hidden xclip-paste-internal -params 1 %{
-    evaluate-commands -save-regs \" %{
-        edit -scratch
-        set-register \"
-        try %{
-            execute-keys -draft -save-regs /| \
-            %[!xclip -o -selection clipboard<ret>gg/..<ret>%Hy]
-        }
-        delete-buffer
-        execute-keys "%val{count}%arg{1}"
+cat <<EOF
+    define-command -hidden xclip-copy-internal %{
+        execute-keys '<a-|>${copy_cmd}<ret>'
     }
+
+    define-command -hidden xclip-paste-internal -params 1 %{
+        evaluate-commands -save-regs '"' %{
+            edit -scratch
+            set-register '"'
+            try %{
+                execute-keys -draft -save-regs /| \
+                '!${paste_cmd}<ret>gg/..<ret>%Hy'
+            }
+            delete-buffer
+            execute-keys "%val{count}%arg{1}"
+        }
+    }
+
+    map -docstring 'copy selection to X clipboard' global user 'y' \
+        ': xclip-copy-internal<ret>'
+
+    map -docstring 'delete selection and copy to X clipboard' global user 'd' \
+        ': xclip-copy-internal<ret><a-d>'
+
+    map -docstring 'paste from X clipboard (append)' global user 'p' \
+        ': xclip-paste-internal p<ret>'
+
+    map -docstring 'paste from X clipboard (prepend)' global user 'P' \
+        ': xclip-paste-internal P<ret>'
+
+    map -docstring 'paste from X clipboard (replace)' global user 'R' \
+        ': xclip-paste-internal R<ret>'
+EOF
 }
 
 # Handles soft tabbing better than the naive approach.
