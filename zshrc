@@ -82,8 +82,11 @@ update-zig () (
     # Symlink Zig lib folder to ~/.local/lib/zig so the Zig executable can find it.
     mkdir -p "${HOME}/.local/lib" || exit
     cd -- "${HOME}/.local/lib"
+    lib_dir="../store/${target_dir}/lib"
+    [ -e "${lib_dir}/zig" ] && \
+        lib_dir="${lib_dir}/zig"
     [ \( ! -e 'zig' \) -o \( -h 'zig' \) ] && \
-        { ln -Tsf "../store/${target_dir}/lib" 'zig' || exit; }
+        { ln -Tsf "${lib_dir}" 'zig' || exit; }
 )
 
 update-zls () (
