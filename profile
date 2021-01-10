@@ -17,9 +17,15 @@ append () {
         "${1}" | *":${1}" \
         | *":${1}:"* | "${1}:"*) ;;
         '') export PATH="${PATH}" ;;
-        *) export PATH="${PATH}:${1}";;
+        *) if [ "${2}" = '-p' ]; then
+            export PATH="${1}:${PATH}"
+        else
+            export PATH="${PATH}:${1}"
+        fi ;;
     esac
 }
+[ -e "${HOME}/.local/bin/betterwine" ] && \
+    append "${HOME}/.local/bin/betterwine" -p
 append "${HOME}/.local/bin"
 append "${HOME}/.cargo/bin"
 unset -f append

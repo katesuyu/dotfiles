@@ -39,7 +39,7 @@ tagField = "function"\
 errorTag = "function"\
 field = "function"\
 parameter = "variable"
-                /^\[semantic_modifiers\]$/c[semantic_token_modifiers]\
+                /^\[semantic_token_modifiers\]$/a\
 namespace = "module"
                 $a\
 \
@@ -50,8 +50,8 @@ command = """'"$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"
             ' <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
         ) && overwrite "${kak_config}/kak-lsp.toml" "${lsp_config}"
         zls_config=$(
-            zig_exe_path="${HOME}/.local/zig/zig" \
-            zig_lib_path="${HOME}/.local/zig/lib/zig" \
+            zig_exe_path="${HOME}/.local/bin/zig" \
+            zig_lib_path="${HOME}/.local/lib/zig" \
             build_runner_path="${HOME}/.local/zls/bin/build_runner.zig" \
             jq -n --indent 4 '{
                 warn_style: false,
@@ -236,7 +236,8 @@ set-option -add global ui_options ncurses_assistant=none
 
 # Load other scripts but don't let errors in one break the whole editor.
 evaluate-commands %sh{
-    for file in "${kak_config}/rc/"*'.kak'; do
+    for file in "${kak_config}/rc.local/"*'.kak' "${kak_config}/rc/"*'.kak'; do
+        [ -f "${file}" ] || continue
         printf "try 'source ''"
         printf '%s' "${file}" | sed "s/'/''''/g"
         printf "'''\n"
