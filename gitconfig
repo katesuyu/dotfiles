@@ -1,7 +1,7 @@
 [user]
     name = Kate Tsuyu
     email = kate@kxt.io
-    signingkey = 144B2129293B0F59
+    signingkey = 89C4A314102F1D7CDC72C070144B2129293B0F59
 [core]
     editor = kak
     excludesfile = ~/.gitignore

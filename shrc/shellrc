@@ -5,6 +5,9 @@ alias mkscript='"${SHRC}/mkscript"'
 alias man='"${SHRC}/man"'
 alias zigstd='"${SHRC}/zigstd"'
 alias mcdata='"${SHRC}/mcdata"'
+alias ssh='TERM=xterm-256color ssh'
+alias update-zig='"${SHRC}/update-zig"'
+alias update-zls='"${SHRC}/update-zls"'
 
 snbt () {
     "${SHRC}/snbt" --to "${@}"

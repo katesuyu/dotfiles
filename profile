@@ -7,9 +7,12 @@ export ENV="${SHRC}/shellrc"
 
 # Because these programs are too helpless to pick these
 # defaults themselves, apparently.
-export GPG_TTY="$(tty)"
-export STEAM_COMPAT_DATA_PATH="${HOME}/.proton"
-export DXVK_STATE_CACHE_PATH="${HOME}/.cache/dxvk"
+{ type gpg || type gpg2; } >/dev/null && \
+    export GPG_TTY="$(tty)"
+[ -e "${HOME}/.proton" ] && \
+    export STEAM_COMPAT_DATA_PATH="${HOME}/.proton"
+[ -e "${HOME}/.cache/dxvk" ] && \
+    export DXVK_STATE_CACHE_PATH="${HOME}/.cache/dxvk"
 
 # Create PATH entries for local files.
 append () {
@@ -24,10 +27,12 @@ append () {
         fi ;;
     esac
 }
+append '/sbin'
 [ -e "${HOME}/.local/bin/betterwine" ] && \
     append "${HOME}/.local/bin/betterwine" -p
 append "${HOME}/.local/bin"
-append "${HOME}/.cargo/bin"
+[ -e "${HOME}/.cargo/bin" ] && \
+    append "${HOME}/.cargo/bin"
 unset -f append
 
 # Integrate Kakoune with the rest of the system.
