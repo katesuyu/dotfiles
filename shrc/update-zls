@@ -1,7 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
-
-zls_dir="${HOME}/.local/zls"
+zls_dir="${HOME}/.local/store/zls"
 printf 'Checking for ZLS install\n' >&2
 if [ -e "${zls_dir}" ]; then
     # Pull updates to ZLS or its dependencies.
@@ -18,4 +17,4 @@ fi
 
 # Always attempt to build, even if we didn't pull any updates. Zig caches builds,
 # so if nothing else changed to force us to rebuild, this command is instant.
-zig build -Drelease-safe -Ddata_version=master --prefix .
+zig build -Drelease-safe -Ddata_version=master --prefix "${HOME}/.local"

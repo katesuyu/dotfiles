@@ -38,16 +38,12 @@ plug "ul/kak-lsp" do %{
 tagField = "function"\
 errorTag = "function"\
 field = "function"\
-parameter = "variable"
+enumMember = "function"\
+parameter = "variable"\
+label = "value"
                 /^\[semantic_token_modifiers\]$/a\
 namespace = "module"
-                $a\
-\
-[language.zig]\
-filetypes = ["zig"]\
-roots = ["build.zig"]\
-command = """'"$(printf '%s' "${HOME}/.local/zls/bin/zls" | sed 's/\\/\\\\/g;s/"/\\"/g;s/\r/\\r/g')"'"""
-            ' <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
+        ' <"${kak_config}/plugins/kak-lsp/kak-lsp.toml"
         ) && overwrite "${kak_config}/kak-lsp.toml" "${lsp_config}"
         zls_config=$(
             zig_exe_path="${HOME}/.local/bin/zig" \
