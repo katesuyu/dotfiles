@@ -132,7 +132,7 @@ define-command -hidden -params 3 license-header-execute %{
         execute-keys 'gg'
         try %{
             # Avoid displacing the shebang in scripts.
-            execute-keys -draft 'xs^#!<ret>'
+            execute-keys -draft '<a-x>s^#!<ret>'
             execute-keys 'xa<c-r>"<esc>'
         } catch %{
             execute-keys 'i<c-r>"<esc>'

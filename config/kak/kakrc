@@ -17,6 +17,26 @@ plug "katesuyu/joule.kak" theme config %{
 # Syntax and indentation hook support for the zzz data format.
 plug "katesuyu/zzz.kak"
 
+# Syntax and indentation hook support for the Janet language.
+plug "pepe/janet.kak" config %{
+    # Detect Janet filetype through shebang line.
+    hook global BufCreate .* %{
+        try %{
+            execute-keys -draft '<a-x>Zs^#!/<ret>zs/env janet$<ret>'
+            set-option buffer filetype janet
+        }
+    }
+
+    # Format Janet documents through spork/fmt.
+    hook global WinSetOption filetype=(janet) %{
+        set-option window formatcmd %[janet -e '(import spork/fmt) (fmt/format-print (file/read stdin :all))']
+        map -docstring 'format document (janet)' window user 'f' ': format-buffer<ret>'
+        hook -once -always window WinSetOption filetype=.* %{
+            unmap window user 'f' ': format-buffer<ret>'
+        }
+    }
+}
+
 # Kakoune language server protocol support.
 plug "ul/kak-lsp" do %{
     cargo install --locked --force --path .
