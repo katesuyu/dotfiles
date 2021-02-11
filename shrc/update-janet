@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+. "${SHRC}/util"
+janet_dir="${HOME}/.local/store/janet"
+try_set new_tag get_git_repo --update --new-tag --display=Janet janet 'https://github.com/janet-lang/janet'
+[ -z "${new_tag}" ] || {
+    try cd -- "${janet_dir}"
+    export PREFIX="${HOME}/.local"
+    make -e && make -e install
+}

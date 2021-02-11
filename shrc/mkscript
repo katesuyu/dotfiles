@@ -10,7 +10,7 @@
         printf "execute-keys '%s';" 'i#!/bin/sh<ret><esc>'
         printf 'hook -once buffer BufWritePost .* %s' '%{
             nop %sh{
-                chmod 700 -- "${kak_hook_param}"
+                chmod +rw -- "${kak_hook_param}"
             }
         }'
     )

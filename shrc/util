@@ -1,0 +1,161 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+# Utility functions that other scripts can source this file to access.
+
+# try [<command> [<arguments>...]]
+# Execute the provided command. On nonzero exit status, ends the script.
+try () { [ "${#}" -eq 0 ] || "${@}" || exit; }
+
+# exe_set <variable> [<command> [<arguments>...]]
+# Execute the provided command, storing its output into the specified variable.
+alias try_set='try exe_set'
+exe_set () {
+    [ "${#}" -eq 0 ] || {
+        case "${1}" in
+           *[!a-zA-Z0-9_]* | '_')
+               printf 'exe_set: bad variable name: %s\n' "${1}" >&2; exit 1 ;;
+           *[!0-9]*) eval '
+                shift
+                '"${1}"'=$("${@}")
+            ' ;;
+           *) printf 'exe_set: bad variable name: %s\n' "${1}" >&2; exit 1 ;;
+        esac
+    }
+}
+
+# exe_setz <variable> [<command> [<arguments>...]]
+# Execute the provided command, storing its output into the specified variable.
+# Unlike exe_set and normal command substitution, this does not strip newlines.
+alias try_setz='try exe_setz'
+exe_setz () {
+    [ "${#}" -eq 0 ] || {
+        case "${1}" in
+           *[!a-zA-Z0-9_]* | '_')
+               printf 'exe_setz: bad variable name: %s\n' "${1}" >&2; exit 1 ;;
+           *[!0-9]*) eval '
+                shift
+                '"${1}"'=$(
+                    "${@}"
+                    set -- "${?}"
+                    printf .
+                    exit "${1}"
+                )
+                set -- "${?}"
+                '"${1}"'=${'"${1}"'%?}
+                return "${1}"
+            ' ;;
+           *) printf 'exe_setz: bad variable name: %s\n' "${1}" >&2; exit 1 ;;
+        esac
+    }
+}
+
+# silence [<command>...]
+# Execute the provided command, but suppress its stdout and stderr.
+silence () {
+    "${@}" >/dev/null 2>&1
+}
+
+# get_git_repo [<options>] <name> <repository>
+# Fetch the latest updates to the specified Git repository, performing a fresh
+# clone if a local checkout is not already present in `~/.local/store`.
+#
+# Options:
+#   --update          pull updates if the repository already exists
+#   --submodules      clone and apply updates to Git submodules
+#   --tag[=<tag>]     checkout the specified tag (default: latest tag)
+#   --new-tag         if checked out a new tag, print it to stdout
+#   --quiet           do not output messages about cloning repositories
+#   --quiet-git       disable Git informational output
+#   --display=<name>  display a prettier name in output
+get_git_repo () (
+    try cd -- "${HOME}/.local/store"
+    unset -v submodules latest_tag specific_tag display_name \
+        update quiet quiet_git name repository end_options \
+        current_tag new_tag
+    process_option () {
+        [ -z "${end_options+n}" ] || return
+        case "${1}" in
+            '--') end_options=1 ;;
+            '--update') update=1 ;;
+            '--submodules') submodules=1 ;;
+            '--quiet') quiet=1 ;;
+            '--quiet-git') quiet_git=1 ;;
+            '--tag') latest_tag=1 ;;
+            '--tag='*) specific_tag=${1#'--tag='} ;;
+            '--new-tag') latest_tag=1; new_tag=1 ;;
+            '--display='*) display_name=${1#'--display='} ;;
+            '--display') printf 'get_git_repo: missing value for --display\n' >&2; exit 1 ;;
+            '---'*) printf 'get_git_repo: malformed option: %s\n' "${1}" >&2; exit 1 ;;
+            '-'*) printf 'get_git_repo: unrecognized option: %s\n' "${1}" >&2; exit 1 ;;
+            *) return 1 ;;
+        esac
+    }
+    num_positional=0
+    for arg in "${@}"; do
+        process_option "${arg}" && continue
+        case "${num_positional}" in
+            0) name=${arg} ;;
+            1) repository=${arg} ;;
+        esac
+        num_positional=$((num_positional + 1))
+    done
+    [ "${num_positional}" -ne 2 ] && {
+        printf 'get_git_repo: expected 2 arguments, found %s\n' "${num_positional}" >&2
+        exit 1
+    }
+    case "${name}" in
+        '' | '.' | '..' | *'/'*)
+            printf 'get_git_repo: invalid checkout name: %s\n' "${name}" >&2
+            exit 1 ;;
+    esac
+    case "${quiet-0}" in
+        0) exec 3>&2 ;;
+        1) exec 3>/dev/null ;;
+    esac
+    [ -n "${quiet_git+n}" ] && \
+        git () {
+            [ "${#}" -gt 0 ] &&
+                case "${1}" in
+                    'describe') ;;
+                    *) t=${1} && shift
+                        set -- "${t}" --quiet "${@}"
+                        unset -v t ;;
+                esac
+            command -- git "${@}"
+        }
+    [ -n "${display_name+n}" ] || \
+        display_name=${name}
+    if [ -e "${name}" ]; then
+        printf 'Using existing checkout of %s\n' "${display_name}" >&3
+        try cd -- "${name}"
+        silence git config advice.detachedHead false
+        [ -n "${update+n}" ] && {
+            try_set current_branch git branch --show-current
+            [ -n "${current_branch}" ] || {
+                silence exe_set current_tag git describe --tags --abbrev=0 || {
+                    unset -v current_tag
+                }
+                try silence git checkout -
+            }
+            try_setz pull_stdout git pull --tags
+            [ -n "${pull_stdout##'Already up to date.'*}" ] || new_pull=1
+            [ -n "${silence+n}" ] || printf '%s' "${pull_stdout}" >&2
+        }
+        unset -v fresh_clone
+    else
+        printf 'Checking out new copy of %s\n' "${display_name}" >&3
+        try git clone -- "${repository}" "${name}" >&2
+        try cd -- "${name}"
+        silence git config advice.detachedHead false
+        fresh_clone=1
+    fi
+    [ -n "${update+n}" -o -n "${fresh_clone+n}" ] && [ -n "${latest_tag+n}" -o -n "${specific_tag+n}" ] && {
+        [ -z "${specific_tag+n}" ] && \
+            try_set specific_tag git describe --tags --abbrev=0
+        try git checkout "refs/tags/${specific_tag}" >&2
+    }
+    [ -z "${submodules+n}" ] || \
+        try git submodule update --init --recursive >&2
+    [ -z "${new_tag+n}" -o -z "${specific_tag+n}" -o "${specific_tag}" = "${current_tag}" ] || \
+        printf '%s\n' "${specific_tag}"
+)

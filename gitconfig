@@ -6,10 +6,7 @@
     editor = kak
     excludesfile = ~/.gitignore
 [color]
-    status = auto
-    branch = auto
-    interactive = auto
-    diff = auto
+    ui = auto
 [gpg]
     program = gpg2
 [pull]

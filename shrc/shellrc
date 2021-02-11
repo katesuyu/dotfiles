@@ -1,20 +1,26 @@
 #!/bin/sh
 # SPDX-License-Identifier: 0BSD
 alias ls='ls --color=auto'
-alias mkscript='"${SHRC}/mkscript"'
-alias man='"${SHRC}/man"'
-alias zigstd='"${SHRC}/zigstd"'
-alias mcdata='"${SHRC}/mcdata"'
-alias ssh='TERM=xterm-256color ssh'
 alias update-zig='"${SHRC}/update-zig"'
 alias update-zls='"${SHRC}/update-zls"'
+alias update-janet='"${SHRC}/update-janet"'
 
-snbt () {
-    "${SHRC}/snbt" --to "${@}"
+type julia >/dev/null && \
+    alias julia='julia --history-file=no'
+
+type ssh >/dev/null && [ "${TERM}" = 'alacritty' ] && \
+    alias ssh='TERM=xterm-256color ssh'
+
+type kak >/dev/null && {
+    alias man='"${SHRC}/man"'
+    alias zigstd='"${SHRC}/zigstd"'
+    alias mkscript='"${SHRC}/mkscript"'
 }
 
-nbt () {
-    "${SHRC}/snbt" --from "${@}"
+[ -e "${HOME}/.local/lib/minecraft-server" ] && {
+    alias mcdata='"${SHRC}/mcdata"'
+    alias snbt='"${SHRC}/snbt" --to'
+    alias nbt='"${SHRC}/nbt" --from'
 }
 
 killfirefox () (
