@@ -4,7 +4,13 @@
 janet_dir="${HOME}/.local/store/janet"
 try_set new_tag get_git_repo --update --new-tag --display=Janet janet 'https://github.com/janet-lang/janet'
 [ -z "${new_tag}" ] || {
-    try cd -- "${janet_dir}"
     export PREFIX="${HOME}/.local"
-    make -e && make -e install
+    try cd -- "${janet_dir}"
+    try make
+    try make install
+    env_cmd=$(command -v env) && \
+        [ "${env_cmd}" != '/usr/bin/env' ] && \
+        [ -x "${PREFIX}/bin/jpm" ] && \
+    sed -i '1c\
+#!'"${env_cmd}"' janet' "${PREFIX}/bin/jpm"
 }
