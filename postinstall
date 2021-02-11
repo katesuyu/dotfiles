@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-License-Identifier: 0BSD
+. "./profile"
+[ -e "${HOME}/.local/bin/zig" ] || "${SHRC}/update-zig"
+[ -e "${HOME}/.local/bin/janet" ] || "${SHRC}/update-janet"
+[ ! -e "${HOME}/.local/bin/jpm" ] || {
+    . "./profile"
+    [ -e "${HOME}/.local/lib/janet/spork" ] || jpm install spork
+}

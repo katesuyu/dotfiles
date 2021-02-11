@@ -35,7 +35,7 @@ mkscript -docstring %{
     execute-keys 'i#!/bin/sh<ret><esc>'
     hook -once buffer BufWritePost .* %{
         nop %sh{
-            chmod +rw -- "${kak_hook_param}"
+            chmod +x -- "${kak_hook_param}"
         }
     }
 }

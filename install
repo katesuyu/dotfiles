@@ -38,3 +38,6 @@ ln_fi "${HOME}/.config/kak" 'config/kak/rc'
 ln_fi "${HOME}/templates" 'templates/gitignore'
 ln_fi "${HOME}/templates" 'templates/licenses'
 ln_fi "${HOME}/templates" 'templates/license-headers'
+
+# Install Zig and Janet if they are not already installed.
+exec ./postinstall
