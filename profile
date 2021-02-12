@@ -14,12 +14,22 @@ append () {
         *[!0-9]*) ;;
         *) return 1 ;;
     esac
-    [ ! -e "${2}" ] || eval '
+    case "${3}" in
+        '-'*) i=${3} && unset -v prepend force
+        while i=${i#?} && [ -n "${i}" ]; do
+            case "${i}" in
+                'p'*) prepend=1 ;;
+                'f'*) force=1 ;;
+                *) return 1 ;;
+            esac
+        done ;;
+    esac
+    [ -z "${force}" -a ! -e "${2}" ] || eval '
         case "${'"${1}"'}" in
             "${2}" | *":${2}" \
             | *":${2}:"* | "${2}:"*) ;;
             "") export '"${1}"'="${2}" ;;
-            *) if [ "${3}" = "-p" ]; then
+            *) if [ -n "${prepend}" ]; then
                 export '"${1}"'="${2}:${'"${1}"'}"
             else
                 export '"${1}"'="${'"${1}"'}:${2}"
@@ -28,8 +38,8 @@ append () {
     '
 }
 append PATH '/sbin'
-append PATH "${HOME}/.local/bin"
-append PATH "${HOME}/.cargo/bin"
+append PATH "${HOME}/.local/bin" -f
+append PATH "${HOME}/.cargo/bin" -f
 append PATH "${HOME}/.local/bin/betterwine" -p
 case "${PATH}" in
     *'linuxbrew'*) ;;
