@@ -22,7 +22,15 @@ plug "pepe/janet.kak" config %{
     # Detect Janet filetype through shebang line.
     hook global BufCreate .* %{
         try %{
-            execute-keys -draft '<a-x>Zs^#!/<ret>zs/env janet$<ret>'
+            execute-keys -draft 'gg<a-x>Zs\A#!/<ret>zs/(?:env )?janet$<ret>'
+            set-option buffer filetype janet
+        }
+    }
+
+    # Recognize Janet filetype for sh wrappers that `exec janet`.
+    hook global BufSetOption filetype=(sh) %{
+        try %{
+            execute-keys -draft 'gg%s\A#!/bin/sh\n"exec" "janet"<ret>'
             set-option buffer filetype janet
         }
     }
