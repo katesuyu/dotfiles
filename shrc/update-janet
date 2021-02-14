@@ -3,14 +3,14 @@
 . "${SHRC}/util"
 janet_dir="${HOME}/.local/store/janet"
 try_set new_tag get_git_repo --update --new-tag --display=Janet janet 'https://github.com/janet-lang/janet'
-[ -z "${new_tag}" ] || {
+[ -z "${new_tag}" -a -e "${janet_dir}/build/janet" ] || {
     export PREFIX="${HOME}/.local"
     try cd -- "${janet_dir}"
+    silence make clean
     try make
     try make install
-    env_cmd=$(command -v env) && \
-        [ "${env_cmd}" != '/usr/bin/env' ] && \
-        [ -x "${PREFIX}/bin/jpm" ] && \
     sed -i '1c\
-#!'"${env_cmd}"' janet' "${PREFIX}/bin/jpm"
+#!/bin/sh\
+"exec" "janet" "--" "${0}" "${@}"
+    ' "${HOME}/.local/bin/jpm"
 }
