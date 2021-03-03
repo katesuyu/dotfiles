@@ -10,7 +10,5 @@ try_set new_tag get_git_repo --update --new-tag --display=Janet janet 'https://g
     try make
     try make install
     sed -i '1c\
-#!/bin/sh\
-"exec" "janet" "--" "${0}" "${@}"
-    ' "${HOME}/.local/bin/jpm"
+#!'"${HOME}/.local/bin/janet" "${HOME}/.local/bin/jpm"
 }
