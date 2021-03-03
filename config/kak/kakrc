@@ -242,7 +242,7 @@ hook global BufWritePost .* %{
 hook global WinSetOption filetype=(sh|kak) %{
     set-face window variable value
     hook -once -always window WinSetOption filetype=.* %{
-        unset-face variable
+        unset-face window variable
     }
 }
 

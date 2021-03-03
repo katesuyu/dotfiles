@@ -20,6 +20,7 @@ cd "$(dirname -- "$(readlink -ne -- "${0}")")"
 ln_Tfi "${HOME}/.profile" 'profile'
 ln_Tfi "${HOME}/.zshenv" 'profile'
 ln_Tfi "${HOME}/.zshrc" 'zshrc'
+ln_Tfi "${HOME}/.npmrc" 'config/npmrc'
 ln_Tfi "${HOME}/.gitconfig" 'gitconfig'
 ln_Tfi "${HOME}/.gitignore" 'gitignore'
 ln_fi "${HOME}/.local/share" 'shrc'

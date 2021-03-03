@@ -20,7 +20,7 @@ type kak >/dev/null && {
 [ -e "${HOME}/.local/lib/minecraft-server" ] && {
     alias mcdata='"${SHRC}/mcdata"'
     alias snbt='"${SHRC}/snbt" --to'
-    alias nbt='"${SHRC}/nbt" --from'
+    alias nbt='"${SHRC}/snbt" --from'
 }
 
 killfirefox () (

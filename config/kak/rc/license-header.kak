@@ -20,7 +20,12 @@ license-header -docstring %{
                 [ ! -e "${file}" ] && continue
                 printf '%s\n' "${file%????}"
             done ;;
-        1) "${kak_config}/rc/project-name" "${kak_buffile}" ;;
+        1) if [ -n "${kak_opt_project_name}" ]; then
+            printf '%s\n' "${kak_opt_project_name}"
+        else
+            git_repo=$("${kak_config}/rc/get-repo" "${kak_buffile}") && \
+            "${kak_config}/rc/project-name" "${git_repo}"
+        fi ;;
     esac
 } %{
     evaluate-commands %sh{
@@ -69,7 +74,8 @@ license-header -docstring %{
             execute "${1}" "${kak_opt_project_name}" && exit
 
         # Infer project name if we have a Git repository and/or README files.
-        name=$("${kak_config}/rc/project-name" "${kak_buffile}") && {
+        git_repo=$("${kak_config}/rc/get-repo" "${kak_buffile}") && \
+        name=$("${kak_config}/rc/project-name" "${git_repo}") && {
             printf "set-option window project_name '"
             printf '%s' "${name}" | sed "s/'/''/g"
             printf "'\n" && execute "${1}" "${name}"
@@ -87,16 +93,23 @@ license-header -docstring %{
 #           1 if project contributor attribution
 define-command -hidden -params 3 license-header-execute %{
     evaluate-commands -draft -save-regs '/"|^@FML' %{
-        # Load the license header into a register.
-        set-register F %sh{cat -- "${HOME}/templates/license-headers/${1}.zig"}
         # Save the comment line type before we switch to temp buffer.
         set-register M %opt{comment_line}
-        # If configured to do so, use "{project} Contributors" to
-        # fill in the {author} field. Otherwise, use Git user.name.
-        set-register L %sh{
-            [ "${3}" -ne 0 ] && printf '%s Contributors' "${2}" && exit
-            cd "$(dirname -- "${kak_buffile}")"
-            git config --get user.name
+        try %{
+            # Override the default generated license text if license is 'CUSTOM'.
+            evaluate-commands %sh{
+                [ "${1}" = 'CUSTOM' ] && \
+                printf '%s\n' 'set-register F %opt{license_text}; fail'
+            }
+            # Load the license header into a register.
+            set-register F %sh{cat -- "${HOME}/templates/license-headers/${1}.zig"}
+            # If configured to do so, use "{project} Contributors" to
+            # fill in the {author} field. Otherwise, use Git user.name.
+            set-register L %sh{
+                [ "${3}" -ne 0 ] && printf '%s Contributors' "${2}" && exit
+                cd "$(dirname -- "${kak_buffile}")"
+                git config --get user.name
+            }
         }
         evaluate-commands -draft %{
             # Create a temporary buffer to edit our license header in.
@@ -109,18 +122,21 @@ define-command -hidden -params 3 license-header-execute %{
             }
             try %{
                 # Insert the current year into the copyright header.
+                try %sh{[ "${1}" = 'CUSTOM' ] && printf 'fail\n'}
                 set-register F %sh{date +%Y | head -c -1}
                 execute-keys '%s\{year\}<ret>'
                 execute-keys -itersel 'c<c-r>F<esc>'
             }
             try %{
                 # Insert the project name into the copyright header.
+                try %sh{[ "${1}" = 'CUSTOM' ] && printf 'fail\n'}
                 set-register F %arg{2}
                 execute-keys '%s\{project\}<ret>'
                 execute-keys -itersel 'c<c-r>F<esc>'
             }
             try %{
                 # Insert the author name into the copyright header.
+                try %sh{[ "${1}" = 'CUSTOM' ] && printf 'fail\n'}
                 execute-keys '%s\{author\}<ret>'
                 execute-keys -itersel 'c<c-r>L<esc>'
             }
@@ -142,25 +158,51 @@ define-command -hidden -params 3 license-header-execute %{
 
 declare-user-mode license-header
 declare-option -docstring 'project name to use for auto-generated text' str project_name
+declare-option -docstring 'license text to use instead of a template' str license_text
+declare-option -hidden bool license_repo_explored
 map -docstring 'generate license header (individual author)' global user 'l' ': license-header-mode 0<ret>'
 map -docstring 'generate license header (project authors)' global user 'L' ': license-header-mode 1<ret>'
 
 define-command -hidden -params 1 license-header-mode %{
     evaluate-commands %sh{
-        case "${1}" in
-            0) switches= ;;
-            1) switches='-project-copyright ' ;;
-            *) printf 'fail\n' && exit ;;
-        esac
-        printf '%s%s\n%s%s\n%s%s%s%s\n' \
-        "map -docstring 'MIT License' window license-header " \
-        "m ': license-header ${switches}mit<ret>'" \
-        "map -docstring 'BSD License (3-clause)' window license-header " \
-        "b ': license-header ${switches}3bsd<ret>'" \
-        "map -docstring 'BSD License (0-clause)' window license-header " \
-        "0 ': license-header 0bsd _<ret>'" \
+        if [ -n "${kak_opt_license_text}" ]; then
+            printf 'license-header-execute CUSTOM _ _\n'
+        else
+            [ "${kak_opt_license_repo_explored}" = 'false' ] && {
+                printf 'set-option window license_repo_explored true\n'
+                git_repo=$("${kak_config}/rc/get-repo" "${kak_buffile}") && {
+                    [ -n "${kak_opt_license_text}" -o ! -e "${git_repo}/.kak/license-header.zig" ] || {
+                        printf "set-option window license_text '"
+                        text1=$(sed "s/'/''/g" <"${git_repo}/.kak/license-header.zig"; printf '.')
+                        text=${text1%"$(printf '\n.')"}
+                        [ "${text}" = "${text1}" ] && text=${text%?}
+                        printf "%s'\nlicense-header-execute CUSTOM _ _\n" "${text}"
+                        exit
+                    }
+                    [ -n "${kak_opt_project_name}" ] || {
+                        name=$("${kak_config}/rc/project-name" "${git_repo}") && {
+                            printf "set-option window project_name '"
+                            printf '%s' "${name}" | sed "s/'/''/g"
+                            printf "'\n"
+                        }
+                    }
+                }
+            }
+            case "${1}" in
+                0) switches= ;;
+                1) switches='-project-copyright ' ;;
+                *) printf 'fail\n' && exit ;;
+            esac
+            printf '%s%s\n%s%s\n%s%s\n%s\n' \
+            "map -docstring 'MIT License' window license-header " \
+            "m ': license-header ${switches}mit<ret>'" \
+            "map -docstring 'BSD License (3-clause)' window license-header " \
+            "b ': license-header ${switches}3bsd<ret>'" \
+            "map -docstring 'BSD License (0-clause)' window license-header " \
+            "0 ': license-header 0bsd _<ret>'" \
+            'enter-user-mode license-header'
+        fi
     }
-    enter-user-mode license-header
 }
 
 try %{

@@ -1,2 +1,2 @@
-# Sometimes ZLS leaves this behind when it crashes.
-/build_runner.zig
+/README.html
+/.kak

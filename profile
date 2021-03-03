@@ -38,8 +38,10 @@ append () {
     '
 }
 append PATH '/sbin'
-append PATH "${HOME}/.local/bin" -f
-append PATH "${HOME}/.cargo/bin" -f
+type npm >/dev/null && \
+    append PATH "${HOME}/.local/store/npm-packages/bin" -fp
+append PATH "${HOME}/.cargo/bin" -fp
+append PATH "${HOME}/.local/bin" -fp
 append PATH "${HOME}/.local/bin/betterwine" -p
 case "${PATH}" in
     *'linuxbrew'*) ;;
@@ -63,10 +65,10 @@ unset -f append
 [ -e "${HOME}/.cache/dxvk" ] && \
     export DXVK_STATE_CACHE_PATH="${HOME}/.cache/dxvk"
 
+# Set preferred text editor to Kakoune.
+type kak >/dev/null && \
+    export VISUAL='kak'
+
 # Standard configuration for GnuPG.
 { type gpg || type gpg2; } >/dev/null && \
     export GPG_TTY="$(tty)"
-
-# Set preferred text editor to Kakoune.
-{ type kak; } >/dev/null && \
-    export VISUAL='kak'
