@@ -57,6 +57,15 @@ append MANPATH "${HOME}/.local/share/man" -p
 append INFOPATH "${HOME}/.local/share/info" -p
 unset -f append
 
+# Append : to MANPATH and INFOPATH if missing.
+for i in MANPATH INFOPATH; do
+    eval '
+        case "${'"${i}"'}" in
+            *[!:]) '"${i}"'="${'"${i}"'}:" ;;
+        esac
+    '
+done
+
 # Set preferred Proton prefix location.
 [ -e "${HOME}/.proton" ] && \
     export STEAM_COMPAT_DATA_PATH="${HOME}/.proton"
