@@ -9,6 +9,10 @@ try_set new_tag get_git_repo --update --new-tag --display=Janet janet 'https://g
     silence make clean
     try make
     try make install
+
     sed -i '1c\
-#!'"${HOME}/.local/bin/janet" "${HOME}/.local/bin/jpm"
+#!'"${HOME}/.local/bin/janet"'
+    s/(and is-janet (dyn :auto-shebang))/is-janet/
+    s/^\( *\)first-line \((if hardcode\)/\1(if-not (string\/has-prefix? "#!" first-line) first-line)\n\1\2/
+    ' "${HOME}/.local/bin/jpm"
 }
